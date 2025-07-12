@@ -10,7 +10,6 @@ import com.ronak.welcome.service.EmailService;
 @Service
 public class EmailSserviceImpl implements EmailService {
     private final JavaMailSender javaMailSender;
-
     public EmailSserviceImpl(JavaMailSender javaMailSender) {
         this.javaMailSender = javaMailSender;
     }

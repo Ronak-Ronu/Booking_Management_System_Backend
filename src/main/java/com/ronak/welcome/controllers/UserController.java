@@ -2,22 +2,21 @@ package com.ronak.welcome.controllers;
 
 
 import com.ronak.welcome.entity.User;
+import com.ronak.welcome.repository.UserRepository;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
 import com.ronak.welcome.service.UserService;
 
 @RestController
 @RequestMapping("/api/v1/user")
 public class UserController {
     private final UserService userService;
+    private final UserRepository userRepository;
 
-
-    public UserController(UserService userService) {
+    public UserController(UserService userService, UserRepository userRepository) {
         this.userService = userService;
+        this.userRepository = userRepository;
     }
 
     @PostMapping
@@ -30,4 +29,11 @@ public class UserController {
                     .body("Error creating user: " + e.getMessage());
         }
     }
+    @GetMapping("/{id}")
+    public ResponseEntity<User> getUser(@PathVariable Long id) {
+        return userRepository.findById(id)
+                .map(ResponseEntity::ok)
+                .orElse(ResponseEntity.status(HttpStatus.NOT_FOUND).build());
+    }
+
 }
