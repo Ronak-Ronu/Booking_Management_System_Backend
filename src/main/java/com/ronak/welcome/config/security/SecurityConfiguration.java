@@ -2,6 +2,7 @@ package com.ronak.welcome.config.security;
 
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.HttpMethod;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.AuthenticationProvider;
 import org.springframework.security.authentication.dao.DaoAuthenticationProvider;
@@ -36,7 +37,7 @@ public class SecurityConfiguration {
                 .csrf(AbstractHttpConfigurer::disable)
                 .authorizeHttpRequests(auth -> auth
                         // ADDED "/api/v1/user" to the permitAll() list
-                        .requestMatchers("/api/v1/user", "/api/v1/auth/**", "/actuator/health").permitAll()
+                        .requestMatchers("/api/v1/user", "/api/v1/events/**","/api/v1/auth/**", "/actuator/health").permitAll()
                         .requestMatchers("/api/v1/admin/**").hasRole("ADMIN")
                         .requestMatchers("/api/v1/organizer/**").hasRole("EVENT_ORGANIZER")
                         .anyRequest().authenticated()

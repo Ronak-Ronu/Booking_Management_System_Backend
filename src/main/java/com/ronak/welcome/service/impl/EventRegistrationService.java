@@ -1,11 +1,11 @@
+// src/main/java/com/ronak/welcome/service/impl/EventRegistrationService.java
 package com.ronak.welcome.service.impl;
-
 
 import com.ronak.welcome.DTO.EventRegistrationResponse;
 import com.ronak.welcome.entity.Event;
 import com.ronak.welcome.entity.EventRegistration;
 import com.ronak.welcome.entity.User;
-import com.ronak.welcome.enums.EventStatus; // Import enum
+import com.ronak.welcome.enums.EventStatus;
 import com.ronak.welcome.exception.ResourceNotFoundException;
 import com.ronak.welcome.exception.ValidationException;
 import com.ronak.welcome.repository.EventRegistrationRepository;
@@ -46,23 +46,27 @@ public class EventRegistrationService {
         EventRegistration registration = new EventRegistration();
         registration.setUser(user);
         registration.setEvent(event);
-        registration.setStatus(EventStatus.REGISTERED); // Set status using the enum
+        registration.setStatus(EventStatus.REGISTERED);
 
         EventRegistration savedRegistration = registrationRepository.save(registration);
         return mapToEventRegistrationResponse(savedRegistration);
     }
 
+    @Transactional // ADDED: Ensures lazy-loaded user and event are accessible
     public List<EventRegistrationResponse> getUserRegistrations(String username) {
         User user = userRepository.findByUsername(username)
                 .orElseThrow(() -> new ResourceNotFoundException("User not found: " + username));
+        // Accessing registration.getUser() and registration.getEvent() here now safe
         return registrationRepository.findByUser(user).stream()
                 .map(this::mapToEventRegistrationResponse)
                 .collect(Collectors.toList());
     }
 
+    @Transactional
     public List<EventRegistrationResponse> getEventRegistrations(Long eventId) {
         Event event = eventRepository.findById(eventId)
                 .orElseThrow(() -> new ResourceNotFoundException("Event not found with ID: " + eventId));
+        // Accessing registration.getUser() and registration.getEvent() here now safe
         return registrationRepository.findByEvent(event).stream()
                 .map(this::mapToEventRegistrationResponse)
                 .collect(Collectors.toList());
@@ -81,16 +85,15 @@ public class EventRegistrationService {
         registrationRepository.delete(registration);
     }
 
-    // Helper method to map EventRegistration entity to EventRegistrationResponse DTO
     private EventRegistrationResponse mapToEventRegistrationResponse(EventRegistration registration) {
         return new EventRegistrationResponse(
                 registration.getId(),
                 registration.getUser().getId(),
                 registration.getUser().getUsername(),
                 registration.getEvent().getId(),
-                registration.getEvent().getName(),
+                registration.getEvent().getName(),  // Accessing user data
                 registration.getRegistrationDate(),
-                registration.getStatus().name() // Convert enum to string for response DTO if preferred
+                registration.getStatus().name()
         );
     }
 }

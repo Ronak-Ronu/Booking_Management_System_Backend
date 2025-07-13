@@ -42,12 +42,14 @@ public class EventService {
         return mapToEventResponse(savedEvent);
     }
 
+    @Transactional
     public EventResponse getEventById(Long id) {
         Event event = eventRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Event not found with ID: " + id));
         return mapToEventResponse(event);
     }
 
+    @Transactional
     public List<EventResponse> getAllEvents() {
         return eventRepository.findAll().stream()
                 .map(this::mapToEventResponse)
