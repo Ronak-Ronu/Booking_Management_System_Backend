@@ -5,11 +5,14 @@ import jakarta.persistence.*;
 import jakarta.validation.constraints.Email;
 import lombok.Data;
 import com.ronak.welcome.enums.Role;
+import lombok.NoArgsConstructor;
+
 import java.util.List;
 import java.util.Set;
 
 @Entity
 @Data
+@NoArgsConstructor
 @Table(name = "users")
 public class User {
     @Id
