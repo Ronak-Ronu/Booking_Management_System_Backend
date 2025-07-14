@@ -1,27 +1,40 @@
 ### User Registration Flow
 ![image](https://github.com/user-attachments/assets/bdb4f08f-ea70-4ae3-a09a-7dd79a1d92ab)
 
-
 # Booking Management System Application API Documentation
-The API documentation for "A booking Management System beyond just "Events" 
+The API documentation for "A booking Management System beyond just "Events"
+
+---
 
 ## Table of Contents
 
 1.  [Technologies Used](#1-technologies-used)
 2.  [Getting Started](#2-getting-started)
-    * [Prerequisites](#prerequisites)
-    * [Local Setup](#local-setup)
+  * [Prerequisites](#prerequisites)
+  * [Local Setup](#local-setup)
+  * [Database Migration](#database-migration)
 3.  [Authentication & Authorization](#3-authentication--authorization)
-    * [Roles](#roles)
-    * [JWT Flow](#jwt-flow)
-    * [API Key Configuration](#api-key-configuration)
+  * [Roles](#roles)
+  * [JWT Flow](#jwt-flow)
+  * [API Key Configuration](#api-key-configuration)
 4.  [API Endpoints](#4-api-endpoints)
-    * [Authentication APIs](#authentication-apis)
-    * [User APIs](#user-apis)
-    * [Event APIs](#event-apis)
-    * [Event Registration APIs](#event-registration-apis)
-5.  [Data Models (DTOs)](#5-data-models-dtos)
-6.  [Error Handling](#6-error-handling)
+  * [Authentication APIs](#authentication-apis)
+  * [User APIs](#user-apis)
+  * [Bookable Item APIs](#bookable-item-apis)
+  * [Booking APIs](#booking-apis)
+  * [Availability APIs](#availability-apis)
+  * [Recommendation APIs](#recommendation-apis)
+  * [Report APIs](#report-apis)
+5.  [Advanced Features & Testing](#5-advanced-features--testing)
+  * [Private Bookable Items](#private-bookable-items)
+  * [Conflict Detection](#conflict-detection)
+  * [Dynamic Availability Calculation](#dynamic-availability-calculation)
+  * [Recommendation System (Content-Based)](#recommendation-system-content-based)
+  * [Dynamic Pricing (Demand-Based Tiers)](#dynamic-pricing-demand-based-tiers)
+  * [Notification Orchestration (Outbox Pattern)](#notification-orchestration-outbox-pattern)
+  * [API Rate Limiting](#api-rate-limiting)
+6.  [Data Models (DTOs)](#6-data-models-dtos)
+7.  [Error Handling](#7-error-handling)
 
 ---
 
@@ -33,9 +46,13 @@ The API documentation for "A booking Management System beyond just "Events"
 * **JWT (JSON Web Tokens):** For stateless authentication.
 * **BCrypt:** Secure password hashing.
 * **Lombok:** Reduces boilerplate code (getters, setters, constructors).
-* **PostgreSQL (Example):** Relational database.
+* **MySQL:** Relational database.
 * **Maven:** Build automation tool.
 * **Java 17+:** Programming language.
+* **Jackson Datatype JSR310:** For proper `java.time` (LocalDateTime) JSON serialization/deserialization.
+* **Bucket4j:** Java rate limiting library based on the token-bucket algorithm.
+
+---
 
 ## 2. Getting Started
 
@@ -43,26 +60,26 @@ The API documentation for "A booking Management System beyond just "Events"
 
 * Java Development Kit (JDK) 17 or higher
 * Maven 3.6+
-* A PostgreSQL database instance (or configure for another database)
+* A **MySQL** database instance
 * Postman or a similar API testing tool
 
 ### Local Setup
 
 1.  **Clone the repository:**
     ```bash
-    git clone <your-repo-url> 
+    git clone <your-repo-url>
     cd <folder-name>
     ```
 
 2.  **Configure `application.properties` (or `application.yml`):**
-    Create `src/main/resources/application.properties` and add your database and JWT configurations.
+    Create `src/main/resources/application.properties` and add your database, JWT, and new feature configurations.
 
     ```properties
-    # Database Configuration (Example for PostgreSQL)
-    spring.datasource.url=jdbc:postgresql://localhost:5432/welcome_db
+    # Database Configuration (Example for MySQL)
+    spring.datasource.url=jdbc:mysql://localhost:3306/welcome_db?createDatabaseIfNotExist=true
     spring.datasource.username=your_db_user
     spring.datasource.password=your_db_password
-    spring.jpa.hibernate.ddl-auto=update # or create, create-drop
+    spring.jpa.hibernate.ddl-auto=update # Recommended for development. Use 'none' or 'validate' for production.
     spring.jpa.show-sql=true
     spring.jpa.properties.hibernate.format_sql=true
 
@@ -70,19 +87,67 @@ The API documentation for "A booking Management System beyond just "Events"
     application.security.jwt.secret-key=YOUR_SUPER_SECRET_KEY_AT_LEAST_256_BITS_LONG_AND_BASE64_ENCODED_FOR_PRODUCTION # Replace with a strong, base64-encoded key
     application.security.jwt.expiration=900000  # 15 minutes in milliseconds
     application.security.jwt.refresh-token.expiration=604800000 # 7 days in milliseconds
-    ```
-    * **`secret-key` Note:** For production, generate a strong, random Base64-encoded key. You can generate one using `Base64.getEncoder().encodeToString(Keys.secretKeyFor(SignatureAlgorithm.HS256).getEncoded())` in Java.
 
-3.  **Build the project:**
+    # Outbox Processor Configuration
+    outbox.processor.batch-size=10
+    outbox.processor.max-retries=5
+
+    # Rate Limiting Configuration
+    app.rate-limit.enabled=true
+    app.rate-limit.capacity=100      # Max requests in a burst
+    app.rate-limit.refill-rate=10    # Tokens added per second
+    app.rate-limit.duration-seconds=1 # The duration over which refill-rate applies
+    ```
+  * **`secret-key` Note:** For production, generate a strong, random Base64-encoded key. You can generate one using `Base64.getEncoder().encodeToString(Keys.secretKeyFor(SignatureAlgorithm.HS256).getEncoded())` in Java.
+
+3.  **Enable Scheduling and Async:**
+    Ensure your main application class (`WelcomeApplication.java`) has the following annotations:
+    ```java
+    import org.springframework.scheduling.annotation.EnableAsync;
+    import org.springframework.scheduling.annotation.EnableScheduling;
+
+    @SpringBootApplication
+    @EnableScheduling
+    @EnableAsync
+    public class WelcomeApplication {
+        // ...
+    }
+    ```
+
+4.  **Build the project:**
     ```bash
     mvn clean install
     ```
 
-4.  **Run the application:**
+5.  **Run the application:**
     ```bash
     mvn spring-boot:run
     ```
     The application will start on `http://localhost:8080` (or your configured port).
+
+### Database Migration
+
+If `spring.jpa.hibernate.ddl-auto` is set to `update`, Hibernate will attempt to manage schema changes automatically. However, for specific column type changes (like `JSON` for `price_tiers` or `TEXT` for `payload` in `outbox_events`), or if `ddl-auto` is `none`/`validate`, you might need to run manual SQL commands:
+
+* **For `bookable_items` table (add `is_private` and `price_tiers`):**
+    ```sql
+    ALTER TABLE bookable_items
+    ADD COLUMN is_private BOOLEAN DEFAULT FALSE NOT NULL,
+    ADD COLUMN price_tiers JSON NULL; -- Use JSON type for MySQL 5.7+
+    ```
+* **For `outbox_events` table (refactor columns):**
+    ```sql
+    ALTER TABLE outbox_events
+    DROP COLUMN IF EXISTS username,
+    DROP COLUMN IF EXISTS email,
+    ADD COLUMN payload TEXT NOT NULL,
+    ADD COLUMN recipient_email VARCHAR(255) NULL,
+    ADD COLUMN IF NOT EXISTS processed_at DATETIME NULL,
+    ADD COLUMN IF NOT EXISTS error_message VARCHAR(255) NULL;
+    ```
+  *(Note: `updated_at` and `retry_count` should already exist from previous steps.)*
+
+---
 
 ## 3. Authentication & Authorization
 
@@ -90,9 +155,9 @@ The application uses **JWT (JSON Web Tokens)** for stateless authentication and 
 
 ### Roles
 
-* **`USER`**: Standard application user. Can register for events, view their own profile, and view public events.
-* **`EVENT_ORGANIZER`**: Can create, update, and delete events they own. Can view registrations for their own events.
-* **`ADMIN`**: Has full administrative privileges across all resources (users, events, registrations).
+* **`USER`**: Standard application user. Can book items, view their own profile, and view public bookable items.
+* **`EVENT_ORGANIZER`**: Can create, update, and delete bookable items they own. Can view bookings for their own items.
+* **`ADMIN`**: Has full administrative privileges across all resources (users, bookable items, bookings, reports).
 
 ### JWT Flow
 
@@ -105,13 +170,15 @@ The application uses **JWT (JSON Web Tokens)** for stateless authentication and 
 
 For Postman, it's recommended to set up an environment variable, e.g., `baseUrl` with value `http://localhost:8080`.
 
+---
+
 ## 4. API Endpoints
 
 ### Authentication APIs
 
-#### **1. Register a New User**
+#### 1. Register a New User
 * **Endpoint:** `POST /api/v1/user`
-* **Purpose:** Creates a new user account.
+* **Purpose:** Creates a new user account. Triggers an asynchronous welcome email via the Outbox Pattern.
 * **Authentication:** Public (No token required).
 * **Request Body:** `User` object (password will be BCrypt encoded).
     ```json
@@ -143,7 +210,7 @@ For Postman, it's recommended to set up an environment variable, e.g., `baseUrl`
     }'
     ```
 
-#### **2. User Login**
+#### 2. User Login
 * **Endpoint:** `POST /api/v1/auth/login`
 * **Purpose:** Authenticates a user and issues JWT access and refresh tokens.
 * **Authentication:** Public.
@@ -171,7 +238,7 @@ For Postman, it's recommended to set up an environment variable, e.g., `baseUrl`
     }'
     ```
 
-#### **3. Refresh Access Token**
+#### 3. Refresh Access Token
 * **Endpoint:** `POST /api/v1/auth/refresh`
 * **Purpose:** Obtains a new access token (and refresh token) using a valid refresh token.
 * **Authentication:** Public (refresh token in body).
@@ -201,7 +268,7 @@ For Postman, it's recommended to set up an environment variable, e.g., `baseUrl`
 
 ### User APIs
 
-#### **1. Get Current Authenticated User's Profile**
+#### 1. Get Current Authenticated User's Profile
 * **Endpoint:** `GET /api/v1/user/me`
 * **Purpose:** Retrieves the profile of the currently logged-in user.
 * **Authentication:** Authenticated.
@@ -220,7 +287,7 @@ For Postman, it's recommended to set up an environment variable, e.g., `baseUrl`
     -H "Authorization: Bearer <YOUR_ACCESS_TOKEN>"
     ```
 
-#### **2. Get User by ID**
+#### 2. Get User by ID
 * **Endpoint:** `GET /api/v1/user/{id}`
 * **Purpose:** Retrieves a user's profile by their ID.
 * **Authentication:** `ADMIN` Role.
@@ -239,7 +306,7 @@ For Postman, it's recommended to set up an environment variable, e.g., `baseUrl`
     -H "Authorization: Bearer <ADMIN_ACCESS_TOKEN>"
     ```
 
-#### **3. Get All Users**
+#### 3. Get All Users
 * **Endpoint:** `GET /api/v1/user`
 * **Purpose:** Retrieves a list of all registered users.
 * **Authentication:** `ADMIN` Role.
@@ -256,7 +323,7 @@ For Postman, it's recommended to set up an environment variable, e.g., `baseUrl`
     -H "Authorization: Bearer <ADMIN_ACCESS_TOKEN>"
     ```
 
-#### **4. Update User Profile**
+#### 4. Update User Profile
 * **Endpoint:** `PUT /api/v1/user/{id}`
 * **Purpose:** Updates an existing user's profile.
 * **Authentication:** User can update their own profile; `ADMIN` can update any profile.
@@ -265,7 +332,7 @@ For Postman, it's recommended to set up an environment variable, e.g., `baseUrl`
     {
         "username": "updated_testuser",
         "email": "updated_test@example.com",
-        "roles": ["USER", "EVENT_ORGANIZER", "ADMIN"] 
+        "roles": ["USER", "EVENT_ORGANIZER", "ADMIN"]
     }
     ```
 * **Success Response (200 OK):** Updated `UserResponse` DTO.
@@ -288,7 +355,7 @@ For Postman, it's recommended to set up an environment variable, e.g., `baseUrl`
     }'
     ```
 
-#### **5. Delete User**
+#### 5. Delete User
 * **Endpoint:** `DELETE /api/v1/user/{id}`
 * **Purpose:** Deletes a user account.
 * **Authentication:** `ADMIN` Role.
@@ -301,231 +368,578 @@ For Postman, it's recommended to set up an environment variable, e.g., `baseUrl`
 
 ---
 
-### Event APIs
+### Bookable Item APIs
 
-#### **1. Create an Event**
-* **Endpoint:** `POST /api/v1/events`
-* **Purpose:** Creates a new event. The logged-in user becomes the organizer.
+These APIs manage the creation, retrieval, and modification of various bookable items (e.g., events, appointments, resources).
+
+#### 1. Create a Bookable Item
+* **Endpoint:** `POST /api/v1/items`
+* **Purpose:** Creates a new bookable item. The logged-in user becomes the organizer. Supports optional `isPrivate` and `priceTiers`.
 * **Authentication:** `EVENT_ORGANIZER` or `ADMIN` Role.
-* **Request Body:** `EventRequest` DTO.
+* **Request Body:** `BookableItemRequest` DTO.
     ```json
     {
         "name": "Spring Boot Workshop",
         "description": "An interactive workshop on Spring Boot basics.",
-        "eventDate": "2025-09-15T10:00:00",
-        "location": "Online via Zoom"
+        "startTime": "2025-09-15T10:00:00",
+        "endTime": "2025-09-15T12:00:00",
+        "location": "Online via Zoom",
+        "capacity": 50,
+        "isPrivate": false,
+        "priceTiers": [
+            {"tier": "Early Bird", "price": 49.99, "maxCapacity": 20},
+            {"tier": "Regular", "price": 59.99, "maxCapacity": 30}
+        ]
     }
     ```
-* **Success Response (201 Created):** `EventResponse` DTO.
+* **Success Response (201 Created):** `BookableItemResponse` DTO.
     ```json
     {
         "id": 101,
         "name": "Spring Boot Workshop",
         "description": "An interactive workshop on Spring Boot basics.",
-        "eventDate": "2025-09-15T10:00:00",
+        "startTime": "2025-09-15T10:00:00",
+        "endTime": "2025-09-15T12:00:00",
         "location": "Online via Zoom",
+        "capacity": 50,
         "organizerId": 2,
         "organizerUsername": "event_organizer",
+        "isPrivate": false,
+        "priceTiers": [
+            {"tier": "Early Bird", "price": 49.99, "maxCapacity": 20},
+            {"tier": "Regular", "price": 59.99, "maxCapacity": 30}
+        ],
+        "currentPrice": 49.99,
+        "availableCapacity": 50,
         "createdAt": "2025-07-13T12:00:00",
         "updatedAt": "2025-07-13T12:00:00"
     }
     ```
 * **Example (Postman/cURL):**
     ```bash
-    curl -X POST "{{baseUrl}}/api/v1/events" \
+    curl -X POST "{{baseUrl}}/api/v1/items" \
     -H "Content-Type: application/json" \
     -H "Authorization: Bearer <EVENT_ORGANIZER_ACCESS_TOKEN>" \
     -d '{
         "name": "Spring Boot Workshop",
         "description": "An interactive workshop on Spring Boot basics.",
-        "eventDate": "2025-09-15T10:00:00",
-        "location": "Online via Zoom"
+        "startTime": "2025-09-15T10:00:00",
+        "endTime": "2025-09-15T12:00:00",
+        "location": "Online via Zoom",
+        "capacity": 50,
+        "isPrivate": false,
+        "priceTiers": [{"tier": "Standard", "price": 59.99, "maxCapacity": 50}]
     }'
     ```
 
-#### **2. Get Event by ID**
-* **Endpoint:** `GET /api/v1/events/{id}`
-* **Purpose:** Retrieves details of a specific event.
-* **Authentication:** Public.
-* **Success Response (200 OK):** `EventResponse` DTO.
+#### 2. Get Bookable Item by ID
+* **Endpoint:** `GET /api/v1/items/{id}`
+* **Purpose:** Retrieves details of a specific bookable item. Private items are only visible to the organizer or admin.
+* **Authentication:** Public for public items. Authenticated (`EVENT_ORGANIZER` for their own private items, `ADMIN` for any private item).
+* **Success Response (200 OK):** `BookableItemResponse` DTO.
     ```json
     {
         "id": 101,
         "name": "Spring Boot Workshop",
         "description": "An interactive workshop on Spring Boot basics.",
-        "eventDate": "2025-09-15T10:00:00",
+        "startTime": "2025-09-15T10:00:00",
+        "endTime": "2025-09-15T12:00:00",
         "location": "Online via Zoom",
+        "capacity": 50,
         "organizerId": 2,
         "organizerUsername": "event_organizer",
+        "isPrivate": false,
+        "priceTiers": [
+            {"tier": "Early Bird", "price": 49.99, "maxCapacity": 20},
+            {"tier": "Regular", "price": 59.99, "maxCapacity": 30}
+        ],
+        "currentPrice": 49.99,
+        "availableCapacity": 50,
         "createdAt": "2025-07-13T12:00:00",
         "updatedAt": "2025-07-13T12:00:00"
     }
     ```
 * **Example (Postman/cURL):**
     ```bash
-    curl -X GET "{{baseUrl}}/api/v1/events/101"
+    curl -X GET "{{baseUrl}}/api/v1/items/101"
     ```
 
-#### **3. Get All Events**
-* **Endpoint:** `GET /api/v1/events`
-* **Purpose:** Retrieves a list of all available events.
+#### 3. Get All Bookable Items
+* **Endpoint:** `GET /api/v1/items`
+* **Purpose:** Retrieves a list of all available public bookable items. Includes filtering by `organizerId`.
 * **Authentication:** Public.
-* **Success Response (200 OK):** List of `EventResponse` DTOs.
+* **Query Parameters:**
+  * `organizerId` (Optional): Filter items by organizer ID.
+  * `onlyMyItems` (Optional): If true, returns only items organized by the authenticated user. Requires authentication.
+* **Success Response (200 OK):** List of `BookableItemResponse` DTOs.
     ```json
     [
         {
             "id": 101,
             "name": "Spring Boot Workshop",
             "description": "An interactive workshop on Spring Boot basics.",
-            "eventDate": "2025-09-15T10:00:00",
+            "startTime": "2025-09-15T10:00:00",
+            "endTime": "2025-09-15T12:00:00",
             "location": "Online via Zoom",
+            "capacity": 50,
             "organizerId": 2,
             "organizerUsername": "event_organizer",
+            "isPrivate": false,
+            "priceTiers": [
+                {"tier": "Early Bird", "price": 49.99, "maxCapacity": 20},
+                {"tier": "Regular", "price": 59.99, "maxCapacity": 30}
+            ],
+            "currentPrice": 49.99,
+            "availableCapacity": 50,
             "createdAt": "2025-07-13T12:00:00",
             "updatedAt": "2025-07-13T12:00:00"
         }
     ]
     ```
-* **Example (Postman/cURL):**
+* **Example (Postman/cURL - Get all public items):**
     ```bash
-    curl -X GET "{{baseUrl}}/api/v1/events"
+    curl -X GET "{{baseUrl}}/api/v1/items"
+    ```
+* **Example (Postman/cURL - Get items by a specific organizer):**
+    ```bash
+    curl -X GET "{{baseUrl}}/api/v1/items?organizerId=2"
+    ```
+* **Example (Postman/cURL - Get items organized by current user):**
+    ```bash
+    curl -X GET "{{baseUrl}}/api/v1/items?onlyMyItems=true" \
+    -H "Authorization: Bearer <EVENT_ORGANIZER_ACCESS_TOKEN>"
     ```
 
-#### **4. Update Event**
-* **Endpoint:** `PUT /api/v1/events/{id}`
-* **Purpose:** Updates an existing event's details.
-* **Authentication:** `ADMIN` Role OR the `EVENT_ORGANIZER` who created the event.
-* **Request Body:** `EventRequest` DTO.
+#### 4. Update Bookable Item
+* **Endpoint:** `PUT /api/v1/items/{id}`
+* **Purpose:** Updates an existing bookable item's details. Can also modify `isPrivate` and `priceTiers`.
+* **Authentication:** `ADMIN` Role OR the `EVENT_ORGANIZER` who created the item.
+* **Request Body:** `BookableItemRequest` DTO.
     ```json
     {
         "name": "Updated Spring Boot Workshop",
         "description": "New description for the updated workshop.",
-        "eventDate": "2025-09-20T14:00:00",
-        "location": "Hybrid - Online & Venue"
+        "startTime": "2025-09-20T14:00:00",
+        "endTime": "2025-09-20T16:00:00",
+        "location": "Hybrid - Online & Venue",
+        "capacity": 60,
+        "isPrivate": true,
+        "priceTiers": [
+            {"tier": "Standard", "price": 65.00, "maxCapacity": 60}
+        ]
     }
     ```
-* **Success Response (200 OK):** Updated `EventResponse` DTO.
-* **Example (Postman/cURL - Organizer updating their event):**
+* **Success Response (200 OK):** Updated `BookableItemResponse` DTO.
+* **Example (Postman/cURL - Organizer updating their item):**
     ```bash
-    curl -X PUT "{{baseUrl}}/api/v1/events/101" \
+    curl -X PUT "{{baseUrl}}/api/v1/items/101" \
     -H "Content-Type: application/json" \
     -H "Authorization: Bearer <EVENT_ORGANIZER_ACCESS_TOKEN>" \
     -d '{
         "name": "Updated Spring Boot Workshop",
         "description": "New description for the updated workshop.",
-        "eventDate": "2025-09-20T14:00:00",
-        "location": "Hybrid - Online & Venue"
+        "startTime": "2025-09-20T14:00:00",
+        "endTime": "2025-09-20T16:00:00",
+        "location": "Hybrid - Online & Venue",
+        "capacity": 60,
+        "isPrivate": true,
+        "priceTiers": [{"tier": "Standard", "price": 65.00, "maxCapacity": 60}]
     }'
     ```
 
-#### **5. Delete Event**
-* **Endpoint:** `DELETE /api/v1/events/{id}`
-* **Purpose:** Deletes an event.
-* **Authentication:** `ADMIN` Role OR the `EVENT_ORGANIZER` who created the event.
+#### 5. Delete Bookable Item
+* **Endpoint:** `DELETE /api/v1/items/{id}`
+* **Purpose:** Deletes a bookable item.
+* **Authentication:** `ADMIN` Role OR the `EVENT_ORGANIZER` who created the item.
 * **Success Response (204 No Content):** No body.
-* **Example (Postman/cURL - Admin deleting any event):**
+* **Example (Postman/cURL - Admin deleting any item):**
     ```bash
-    curl -X DELETE "{{baseUrl}}/api/v1/events/101" \
+    curl -X DELETE "{{baseUrl}}/api/v1/items/101" \
     -H "Authorization: Bearer <ADMIN_ACCESS_TOKEN>"
     ```
 
 ---
 
-### Event Registration APIs
+### Booking APIs
 
-#### **1. Register for an Event**
-* **Endpoint:** `POST /api/v1/registrations/events/{eventId}`
-* **Purpose:** Registers the current authenticated user for a specific event.
-* **Authentication:** Authenticated.
-* **Success Response (201 Created):** `EventRegistrationResponse` DTO.
+These APIs handle the actual booking process and management of user bookings.
+
+#### 1. Create a Booking for an Item
+* **Endpoint:** `POST /api/v1/bookings/items/{itemId}`
+* **Purpose:** Creates a new booking for the current authenticated user for a specific bookable item. Checks for availability and conflicts.
+* **Authentication:** Authenticated (`USER`, `EVENT_ORGANIZER`, `ADMIN`).
+* **Request Body:** `BookingRequest` DTO (optional if using default tier, required if specifying a price tier).
+    ```json
+    {
+        "priceTier": "Early Bird"
+    }
+    ```
+* **Success Response (201 Created):** `BookingResponse` DTO. Triggers asynchronous booking confirmation email.
     ```json
     {
         "id": 201,
         "userId": 1,
         "username": "testuser",
-        "eventId": 101,
-        "eventName": "Spring Boot Workshop",
-        "registrationDate": "2025-07-13T15:30:00",
-        "status": "REGISTERED"
+        "itemId": 101,
+        "itemName": "Spring Boot Workshop",
+        "bookingDate": "2025-07-13T15:30:00",
+        "status": "CONFIRMED",
+        "pricePaid": 49.99
     }
     ```
 * **Example (Postman/cURL):**
     ```bash
-    curl -X POST "{{baseUrl}}/api/v1/registrations/events/101" \
-    -H "Authorization: Bearer <USER_ACCESS_TOKEN>"
+    curl -X POST "{{baseUrl}}/api/v1/bookings/items/101" \
+    -H "Content-Type: application/json" \
+    -H "Authorization: Bearer <USER_ACCESS_TOKEN>" \
+    -d '{
+        "priceTier": "Early Bird"
+    }'
     ```
 
-#### **2. Get My Event Registrations**
-* **Endpoint:** `GET /api/v1/registrations/me`
-* **Purpose:** Retrieves all events the current authenticated user has registered for.
+#### 2. Get My Bookings
+* **Endpoint:** `GET /api/v1/bookings/me`
+* **Purpose:** Retrieves all upcoming and past bookings for the current authenticated user.
 * **Authentication:** Authenticated.
-* **Success Response (200 OK):** List of `EventRegistrationResponse` DTOs.
+* **Success Response (200 OK):** List of `BookingResponse` DTOs.
     ```json
     [
         {
             "id": 201,
             "userId": 1,
             "username": "testuser",
-            "eventId": 101,
-            "eventName": "Spring Boot Workshop",
-            "registrationDate": "2025-07-13T15:30:00",
-            "status": "REGISTERED"
+            "itemId": 101,
+            "itemName": "Spring Boot Workshop",
+            "bookingDate": "2025-07-13T15:30:00",
+            "status": "CONFIRMED",
+            "pricePaid": 49.99
         }
     ]
     ```
 * **Example (Postman/cURL):**
     ```bash
-    curl -X GET "{{baseUrl}}/api/v1/registrations/me" \
+    curl -X GET "{{baseUrl}}/api/v1/bookings/me" \
     -H "Authorization: Bearer <USER_ACCESS_TOKEN>"
     ```
 
-#### **3. Get All Registrations for an Event**
-* **Endpoint:** `GET /api/v1/registrations/events/{eventId}`
-* **Purpose:** Retrieves all users registered for a specific event.
-* **Authentication:** `ADMIN` Role OR the `EVENT_ORGANIZER` of that event.
-* **Success Response (200 OK):** List of `EventRegistrationResponse` DTOs.
+#### 3. Get All Bookings for a Specific Item
+* **Endpoint:** `GET /api/v1/bookings/items/{itemId}`
+* **Purpose:** Retrieves all bookings for a specific bookable item.
+* **Authentication:** `ADMIN` Role OR the `EVENT_ORGANIZER` of that item.
+* **Success Response (200 OK):** List of `BookingResponse` DTOs.
     ```json
     [
         {
             "id": 201,
             "userId": 1,
             "username": "testuser",
-            "eventId": 101,
-            "eventName": "Spring Boot Workshop",
-            "registrationDate": "2025-07-13T15:30:00",
-            "status": "REGISTERED"
+            "itemId": 101,
+            "itemName": "Spring Boot Workshop",
+            "bookingDate": "2025-07-13T15:30:00",
+            "status": "CONFIRMED",
+            "pricePaid": 49.99
         },
         {
             "id": 202,
             "userId": 3,
             "username": "another_user",
-            "eventId": 101,
-            "eventName": "Spring Boot Workshop",
-            "registrationDate": "2025-07-13T16:00:00",
-            "status": "REGISTERED"
+            "itemId": 101,
+            "itemName": "Spring Boot Workshop",
+            "bookingDate": "2025-07-13T16:00:00",
+            "status": "CONFIRMED",
+            "pricePaid": 59.99
         }
     ]
     ```
 * **Example (Postman/cURL):**
     ```bash
-    curl -X GET "{{baseUrl}}/api/v1/registrations/events/101" \
+    curl -X GET "{{baseUrl}}/api/v1/bookings/items/101" \
     -H "Authorization: Bearer <EVENT_ORGANIZER_OR_ADMIN_ACCESS_TOKEN>"
     ```
 
-#### **4. Unregister from an Event**
-* **Endpoint:** `DELETE /api/v1/registrations/events/{eventId}`
-* **Purpose:** Removes the current authenticated user's registration from an event.
-* **Authentication:** Authenticated (user must be registered for the event).
-* **Success Response (204 No Content):** No body.
+#### 4. Cancel a Booking
+* **Endpoint:** `PUT /api/v1/bookings/{bookingId}/cancel`
+* **Purpose:** Cancels an existing booking. Can be done by the user who made the booking or an admin. Triggers asynchronous cancellation email.
+* **Authentication:** Authenticated (user must own the booking or have `ADMIN` role).
+* **Success Response (200 OK):** Updated `BookingResponse` DTO with `CANCELLED` status.
 * **Example (Postman/cURL):**
     ```bash
-    curl -X DELETE "{{baseUrl}}/api/v1/registrations/events/101" \
+    curl -X PUT "{{baseUrl}}/api/v1/bookings/201/cancel" \
+    -H "Authorization: Bearer <USER_ACCESS_TOKEN>"
+    ```
+
+#### 5. Update Booking Status (Admin/Organizer)
+* **Endpoint:** `PUT /api/v1/bookings/{bookingId}/status`
+* **Purpose:** Allows an admin or organizer to manually update a booking's status.
+* **Authentication:** `ADMIN` Role OR the `EVENT_ORGANIZER` of the associated item.
+* **Request Body:** `BookingStatusUpdateRequest` DTO.
+    ```json
+    {
+        "status": "COMPLETED"
+    }
+    ```
+* **Success Response (200 OK):** Updated `BookingResponse` DTO.
+* **Example (Postman/cURL):**
+    ```bash
+    curl -X PUT "{{baseUrl}}/api/v1/bookings/201/status" \
+    -H "Content-Type: application/json" \
+    -H "Authorization: Bearer <ADMIN_ACCESS_TOKEN>" \
+    -d '{
+        "status": "COMPLETED"
+    }'
+    ```
+
+---
+
+### Availability APIs
+
+These APIs provide insights into the real-time availability of bookable items.
+
+#### 1. Get Available Capacity for a Bookable Item
+* **Endpoint:** `GET /api/v1/items/{itemId}/availability`
+* **Purpose:** Returns the current available capacity for a given bookable item, considering its total capacity and existing confirmed bookings.
+* **Authentication:** Public.
+* **Success Response (200 OK):** `AvailableCapacityResponse` DTO.
+    ```json
+    {
+        "itemId": 101,
+        "itemName": "Spring Boot Workshop",
+        "totalCapacity": 50,
+        "bookedSlots": 10,
+        "availableSlots": 40
+    }
+    ```
+* **Example (Postman/cURL):**
+    ```bash
+    curl -X GET "{{baseUrl}}/api/v1/items/101/availability"
+    ```
+
+#### 2. Check for Time Conflicts for a User
+* **Endpoint:** `GET /api/v1/users/me/conflicts?startTime={startTime}&endTime={endTime}`
+* **Purpose:** Checks if the authenticated user has any existing bookings that conflict with a specified time range.
+* **Authentication:** Authenticated.
+* **Query Parameters:**
+  * `startTime`: Start time of the period to check (e.g., `2025-09-15T09:00:00`).
+  * `endTime`: End time of the period to check (e.g., `2025-09-15T11:00:00`).
+* **Success Response (200 OK):** `UserConflictCheckResponse` DTO.
+    ```json
+    {
+        "userId": 1,
+        "hasConflict": true,
+        "conflictingBookings": [
+            {
+                "id": 201,
+                "itemName": "Another Meeting",
+                "startTime": "2025-09-15T09:30:00",
+                "endTime": "2025-09-15T10:30:00"
+            }
+        ]
+    }
+    ```
+* **Example (Postman/cURL):**
+    ```bash
+    curl -X GET "{{baseUrl}}/api/v1/users/me/conflicts?startTime=2025-09-15T09:00:00&endTime=2025-09-15T11:00:00" \
     -H "Authorization: Bearer <USER_ACCESS_TOKEN>"
     ```
 
 ---
 
-## 5. Data Models (DTOs)
+### Recommendation APIs
+
+This API provides recommendations for bookable items based on a content-based filtering approach.
+
+#### 1. Get Recommended Items for User
+* **Endpoint:** `GET /api/v1/recommendations/users/me`
+* **Purpose:** Returns a list of bookable items recommended for the authenticated user based on their past booking history and the characteristics of those items (e.g., location, type, organizer).
+* **Authentication:** Authenticated.
+* **Query Parameters:**
+  * `limit` (Optional): Maximum number of recommendations to return (default: 5).
+* **Success Response (200 OK):** List of `BookableItemResponse` DTOs.
+    ```json
+    [
+        {
+            "id": 105,
+            "name": "Advanced Spring Security Workshop",
+            "description": "Deep dive into Spring Security.",
+            "startTime": "2025-10-01T09:00:00",
+            "endTime": "2025-10-01T17:00:00",
+            "location": "Online via Zoom",
+            "capacity": 30,
+            "organizerId": 2,
+            "organizerUsername": "event_organizer",
+            "isPrivate": false,
+            "priceTiers": [
+                {"tier": "Standard", "price": 99.99, "maxCapacity": 30}
+            ],
+            "currentPrice": 99.99,
+            "availableCapacity": 25,
+            "createdAt": "2025-07-10T10:00:00",
+            "updatedAt": "2025-07-10T10:00:00"
+        },
+        {
+            "id": 106,
+            "name": "Jakarta EE Basics",
+            "description": "Introduction to Jakarta EE.",
+            "startTime": "2025-09-25T13:00:00",
+            "endTime": "2025-09-25T16:00:00",
+            "location": "Conference Room A",
+            "capacity": 20,
+            "organizerId": 4,
+            "organizerUsername": "another_organizer",
+            "isPrivate": false,
+            "priceTiers": [
+                {"tier": "Standard", "price": 75.00, "maxCapacity": 20}
+            ],
+            "currentPrice": 75.00,
+            "availableCapacity": 18,
+            "createdAt": "2025-07-11T11:00:00",
+            "updatedAt": "2025-07-11T11:00:00"
+        }
+    ]
+    ```
+* **Example (Postman/cURL):**
+    ```bash
+    curl -X GET "{{baseUrl}}/api/v1/recommendations/users/me?limit=3" \
+    -H "Authorization: Bearer <USER_ACCESS_TOKEN>"
+    ```
+
+---
+
+### Report APIs
+
+These APIs provide administrative reporting capabilities.
+
+#### 1. Get Booking Revenue Report
+* **Endpoint:** `GET /api/v1/reports/revenue`
+* **Purpose:** Generates a report on total revenue, optionally filtered by `itemId` and/or a date range. Only `ADMIN` can access this.
+* **Authentication:** `ADMIN` Role.
+* **Query Parameters:**
+  * `itemId` (Optional): Filter revenue for a specific bookable item.
+  * `startDate` (Optional): Start date for the report (e.g., `2025-01-01`).
+  * `endDate` (Optional): End date for the report (e.g., `2025-12-31`).
+* **Success Response (200 OK):** `RevenueReportResponse` DTO.
+    ```json
+    {
+        "totalRevenue": 1500.75,
+        "reportDetails": [
+            {
+                "itemId": 101,
+                "itemName": "Spring Boot Workshop",
+                "itemRevenue": 750.50,
+                "numberOfBookings": 15
+            },
+            {
+                "itemId": 102,
+                "itemName": "Team Building Session",
+                "itemRevenue": 750.25,
+                "numberOfBookings": 10
+            }
+        ]
+    }
+    ```
+* **Example (Postman/cURL - Total Revenue):**
+    ```bash
+    curl -X GET "{{baseUrl}}/api/v1/reports/revenue" \
+    -H "Authorization: Bearer <ADMIN_ACCESS_TOKEN>"
+    ```
+* **Example (Postman/cURL - Revenue for a specific item in a date range):**
+    ```bash
+    curl -X GET "{{baseUrl}}/api/v1/reports/revenue?itemId=101&startDate=2025-07-01&endDate=2025-09-30" \
+    -H "Authorization: Bearer <ADMIN_ACCESS_TOKEN>"
+    ```
+
+---
+
+## 5. Advanced Features & Testing
+
+This section details advanced features implemented and provides guidance on how to test them.
+
+### Private Bookable Items
+
+* **Feature:** Bookable items can be marked as `isPrivate=true`. Private items are only discoverable and viewable by their `organizerId` or an `ADMIN`. They will not appear in the general `/api/v1/items` listing for regular users.
+* **Testing:**
+  1.  Create a user with `EVENT_ORGANIZER` role (`organizer1`).
+  2.  `organizer1` creates a private item.
+  3.  Attempt to `GET /api/v1/items/{privateItemId}` as `organizer1` (should succeed).
+  4.  Attempt to `GET /api/v1/items/{privateItemId}` as a `USER` (should return 404 Not Found or 403 Forbidden).
+  5.  Attempt to `GET /api/v1/items` as a `USER` (private item should not be in the list).
+  6.  Attempt to `GET /api/v1/items/{privateItemId}` as `ADMIN` (should succeed).
+  7.  Have a `USER` try to book a private item (should return an error indicating the item isn't found or accessible).
+
+### Conflict Detection
+
+* **Feature:** When a user attempts to create a booking, the system checks if the new booking's time (`startTime` to `endTime` of the `BookableItem`) overlaps with any of their existing **confirmed** bookings. If a conflict is detected, the booking is rejected.
+* **Testing:**
+  1.  Create a `USER`.
+  2.  Create two public `BookableItem`s (`itemA`, `itemB`) with overlapping `startTime` and `endTime`.
+  3.  Have the `USER` successfully book `itemA`.
+  4.  Have the `USER` attempt to book `itemB`. This request should result in a `409 Conflict` error with a message indicating the time conflict.
+  5.  Verify that booking an item that *doesn't* conflict with existing bookings succeeds.
+
+### Dynamic Availability Calculation
+
+* **Feature:** The `availableCapacity` and `currentPrice` for a `BookableItem` are calculated dynamically at the time of retrieval (`GET /api/v1/items/{id}` and `GET /api/v1/items`). `availableCapacity` is `totalCapacity - confirmedBookingsCount`. `currentPrice` is determined by the `priceTiers` based on how many slots are remaining.
+* **Testing:**
+  1.  Create a `BookableItem` with `capacity` = 50 and two `priceTiers`: "Early Bird" (price 49.99, maxCapacity 20) and "Regular" (price 59.99, maxCapacity 30).
+  2.  `GET /api/v1/items/{itemId}`: Verify `availableCapacity` is 50 and `currentPrice` is 49.99.
+  3.  Have 10 `USER`s book this item (using "Early Bird" tier implicitly or explicitly).
+  4.  `GET /api/v1/items/{itemId}`: Verify `availableCapacity` is 40 and `currentPrice` is still 49.99.
+  5.  Have 15 more `USER`s book this item (total 25 confirmed bookings).
+  6.  `GET /api/v1/items/{itemId}`: Verify `availableCapacity` is 25 and `currentPrice` is 59.99 (as "Early Bird" tier is now full, price moves to next tier).
+  7.  Attempt to book the item once `availableCapacity` reaches 0 (should result in `400 Bad Request` or similar indicating no more slots).
+
+### Recommendation System (Content-Based)
+
+* **Feature:** The `/api/v1/recommendations/users/me` endpoint provides personalized recommendations. It identifies categories or organizers from the user's past confirmed bookings and suggests other items within those categories/by those organizers that the user hasn't booked yet.
+* **Testing:**
+  1.  Create multiple `BookableItem`s with different `organizerId`s and categories (e.g., "Tech Workshop" by `organizer1`, "Fitness Class" by `organizer2`, "Another Tech Workshop" by `organizer1`).
+  2.  Have a `USER` book "Tech Workshop" by `organizer1`.
+  3.  `GET /api/v1/recommendations/users/me` as that `USER`. The response should prioritize "Another Tech Workshop" by `organizer1` and other tech-related items if they exist. Items by `organizer2` or in other categories should be less likely unless a user has booked from diverse categories.
+  4.  Book more diverse items and observe how recommendations change.
+
+### Dynamic Pricing (Demand-Based Tiers)
+
+* **Feature:** Bookable items can have `priceTiers`, an array of objects specifying `tier` name, `price`, and `maxCapacity` for that tier. The `currentPrice` of the item (and the price a user pays) is determined by the highest `price` tier for which `availableCapacity` still exists within its `maxCapacity`.
+* **Testing:** (Covered partly in Dynamic Availability Calculation)
+  1.  Create an item with tiers:
+      ```json
+      "priceTiers": [
+          {"tier": "Super Early Bird", "price": 29.99, "maxCapacity": 5},
+          {"tier": "Early Bird", "price": 49.99, "maxCapacity": 20},
+          {"tier": "Regular", "price": 69.99, "maxCapacity": 25}
+      ]
+      ```
+      Total capacity = 50.
+  2.  **Initial:** `currentPrice` should be 29.99.
+  3.  Book 5 slots: `currentPrice` should become 49.99.
+  4.  Book another 20 slots (total 25): `currentPrice` should become 69.99.
+  5.  Attempt to book more than the item's total capacity (e.g., 51st booking) — should fail with an appropriate error (e.g., "Capacity exceeded").
+  6.  Verify that when a user books, the `pricePaid` in the `BookingResponse` reflects the `currentPrice` at the moment of booking.
+
+### Notification Orchestration (Outbox Pattern)
+
+* **Feature:** Instead of directly sending emails, the application uses the Outbox Pattern. When a user registers or a booking is made/cancelled, a corresponding `OutboxEvent` is saved to the database within the same transaction. A scheduled job (`OutboxProcessor`) then asynchronously picks up these events and simulates sending notifications (e.g., logging them) without blocking the main request thread. It includes retry logic.
+* **Testing:**
+  1.  Set `spring.jpa.hibernate.ddl-auto=update` or manually create the `outbox_events` table as specified in Database Migration.
+  2.  Register a new user via `POST /api/v1/user`.
+  3.  Immediately after the successful response, query the `outbox_events` table in your database. You should see a new entry with `eventType='USER_REGISTERED'` and `processed_at` as NULL.
+  4.  Wait a few seconds (the scheduler interval).
+  5.  Query the `outbox_events` table again. The `processed_at` column for that event should now have a timestamp, indicating it was processed, and you should see a log message in the application console simulating the email sending.
+  6.  Repeat for a successful `POST /api/v1/bookings/items/{itemId}` (event type `BOOKING_CONFIRMED`) and a `PUT /api/v1/bookings/{bookingId}/cancel` (event type `BOOKING_CANCELLED`).
+  7.  To test retry logic: Temporarily configure the email service (or mock it) to fail, then observe `retry_count` and `error_message` updating in `outbox_events`.
+
+### API Rate Limiting
+
+* **Feature:** Protects certain endpoints (e.g., login, registration) from excessive requests using the Bucket4j library to prevent brute-force attacks or denial-of-service. Configurable via `application.properties`.
+* **Testing:**
+  1.  Ensure `app.rate-limit.enabled=true` and set `app.rate-limit.capacity` to a low number (e.g., 5) and `app.rate-limit.refill-rate` to 1 token per second.
+  2.  Rapidly send more than `capacity` (e.g., 6 or more) `POST /api/v1/auth/login` requests from the same IP address/client.
+  3.  The first few requests should succeed. Subsequent requests exceeding the limit within the defined period should receive a `429 Too Many Requests` HTTP status code.
+  4.  Wait for the `refill-rate` duration, then try again. Requests should now succeed until the limit is hit again.
+
+---
+
+## 6. Data Models (DTOs)
 
 This section outlines the primary Data Transfer Objects (DTOs) used for API requests and responses.
 
@@ -554,138 +968,116 @@ This section outlines the primary Data Transfer Objects (DTOs) used for API requ
     public record UserUpdateRequest(String username, String email, Set<Role> roles) {}
     ```
 
-* **`EventRequest`**
+* **`PriceTierDTO`**
     ```java
-    public record EventRequest(String name, String description, LocalDateTime eventDate, String location) {}
+    public record PriceTierDTO(String tier, double price, int maxCapacity) {}
     ```
 
-* **`EventResponse`**
+* **`BookableItemRequest`**
     ```java
-    public record EventResponse(Long id, String name, String description, LocalDateTime eventDate, String location, Long organizerId, String organizerUsername, LocalDateTime createdAt, LocalDateTime updatedAt) {}
+    public record BookableItemRequest(
+        String name,
+        String description,
+        LocalDateTime startTime,
+        LocalDateTime endTime,
+        String location,
+        int capacity,
+        boolean isPrivate,
+        List<PriceTierDTO> priceTiers
+    ) {}
     ```
 
-* **`EventRegistrationResponse`**
+* **`BookableItemResponse`**
     ```java
-    public record EventRegistrationResponse(Long id, Long userId, String username, Long eventId, String eventName, LocalDateTime registrationDate, String status) {}
+    public record BookableItemResponse(
+        Long id,
+        String name,
+        String description,
+        LocalDateTime startTime,
+        LocalDateTime endTime,
+        String location,
+        int capacity,
+        Long organizerId,
+        String organizerUsername,
+        boolean isPrivate,
+        List<PriceTierDTO> priceTiers,
+        double currentPrice,       // Dynamically calculated
+        int availableCapacity,     // Dynamically calculated
+        LocalDateTime createdAt,
+        LocalDateTime updatedAt
+    ) {}
     ```
 
-## 6. Error Handling
+* **`BookingRequest`**
+    ```java
+    public record BookingRequest(String priceTier) {} // Optional: specify preferred price tier
+    ```
+
+* **`BookingResponse`**
+    ```java
+    public record BookingResponse(
+        Long id,
+        Long userId,
+        String username,
+        Long itemId,
+        String itemName,
+        LocalDateTime bookingDate,
+        BookingStatus status,      // e.g., PENDING, CONFIRMED, CANCELLED, COMPLETED
+        double pricePaid
+    ) {}
+    ```
+
+* **`BookingStatusUpdateRequest`**
+    ```java
+    public record BookingStatusUpdateRequest(BookingStatus status) {}
+    ```
+
+* **`AvailableCapacityResponse`**
+    ```java
+    public record AvailableCapacityResponse(
+        Long itemId,
+        String itemName,
+        int totalCapacity,
+        int bookedSlots,
+        int availableSlots
+    ) {}
+    ```
+
+* **`UserConflictCheckResponse`**
+    ```java
+    public record UserConflictCheckResponse(
+        Long userId,
+        boolean hasConflict,
+        List<ConflictingBookingDTO> conflictingBookings
+    ) {}
+    ```
+  * **`ConflictingBookingDTO`** (nested within `UserConflictCheckResponse`)
+      ```java
+      public record ConflictingBookingDTO(Long id, String itemName, LocalDateTime startTime, LocalDateTime endTime) {}
+      ```
+
+* **`RevenueReportResponse`**
+    ```java
+    public record RevenueReportResponse(
+        double totalRevenue,
+        List<ItemRevenueDetail> reportDetails
+    ) {}
+    ```
+  * **`ItemRevenueDetail`** (nested within `RevenueReportResponse`)
+      ```java
+      public record ItemRevenueDetail(Long itemId, String itemName, double itemRevenue, long numberOfBookings) {}
+      ```
+
+---
+
+## 7. Error Handling
 
 The API provides consistent error responses through a `GlobalExceptionHandler`:
 
-* **`400 Bad Request`**: For invalid request body (validation errors) or business logic validation failures (`ValidationException`).
+* **`400 Bad Request`**: For invalid request body (validation errors) or business logic validation failures (e.g., `ValidationException`, `CapacityExceededException`).
 * **`401 Unauthorized`**: For missing or invalid authentication tokens.
 * **`403 Forbidden`**: For valid tokens but insufficient permissions (`AccessDeniedException`).
 * **`404 Not Found`**: For resources not found (`ResourceNotFoundException`).
-* **`409 Conflict`**: For resource creation conflicts (e.g., `UserAlreadyExistsException`).
+* **`409 Conflict`**: For resource creation conflicts (e.g., `UserAlreadyExistsException`, `TimeConflictException`).
+* **`429 Too Many Requests`**: When API rate limits are exceeded.
 * **`500 Internal Server Error`**: For unexpected server-side errors.
-
-# Booking Management System - TODO Features
-
-This document outlines the planned features and enhancements to evolve the current Event Management system into a comprehensive Booking Management System. Each item represents a potential area for development.
-
----
-
-## Table of Contents
-
-1.  [Core Booking Functionality](#1-core-booking-functionality)
-2.  [Scheduling & Availability](#2-scheduling--availability)
-3.  [Financial & Payment](#3-financial--payment)
-4.  [Notifications & Communication](#4-notifications--communication)
-5.  [User & Admin Dashboards](#5-user--admin-dashboards)
-6.  [Discovery & Feedback](#6-discovery--feedback)
-7.  [Technical Enhancements](#7-technical-enhancements)
-
----
-
-## 1. Core Booking Functionality
-
-* [ ] **Generalize Bookable Items:**
-    * [ ] Introduce a generic `BookableItem` entity (or refactor `Event` to be more abstract) to represent various types of bookable resources/services (e.g., appointments, meeting rooms, classes).
-    * [ ] Implement API endpoints for CRUD operations on `BookableItem` types.
-* [ ] **Categorization of Bookable Items:**
-    * [ ] Add a categorization system (e.g., "Sports," "Health," "Education") for `BookableItem`s.
-    * [ ] Implement APIs for managing categories.
-* [ ] **Booking Status Transitions:**
-    * [ ] Define clear state machine for booking statuses (e.g., `PENDING`, `CONFIRMED`, `CANCELLED`, `COMPLETED`, `NO_SHOW`).
-    * [ ] Implement APIs to update booking status.
-
-## 2. Scheduling & Availability
-
-* [ ] **Time Slot Management:**
-    * [ ] Implement functionality to define specific time slots for `BookableItem`s (e.g., 1-hour slots for appointments).
-    * [ ] APIs to create, update, and delete time slots.
-* [ ] **Recurring Bookings:**
-    * [ ] Add support for defining recurring schedules for `BookableItem`s (e.g., weekly classes).
-    * [ ] Implement APIs for managing recurring patterns.
-* [ ] **Capacity Management:**
-    * [ ] Enforce maximum capacity for each `BookableItem` or time slot.
-    * [ ] Implement logic to decrement/increment available slots upon booking/cancellation.
-* [ ] **Waitlist Functionality:**
-    * [ ] Allow users to join a waitlist if a `BookableItem` or slot is fully booked.
-    * [ ] Implement notification system for waitlisted users when a spot opens up.
-* [ ] **Calendar Availability API:**
-    * [ ] Develop an API to query available time slots/items for a given date range, suitable for front-end calendar integration.
-
-## 3. Financial & Payment
-
-* [ ] **Payment Integration:**
-    * [ ] Integrate with a payment gateway (e.g., Stripe, PayPal) for processing payments.
-    * [ ] Create `Payment` or `Transaction` entity to record payment details and status.
-* [ ] **Pricing Models:**
-    * [ ] Implement flexible pricing for `BookableItem`s (e.g., fixed price, per-person, per-hour).
-    * [ ] APIs for managing pricing.
-* [ ] **Discount Codes/Promotions:**
-    * [ ] Implement functionality for creating and validating discount codes.
-    * [ ] Apply discounts during the booking process.
-* [ ] **Refund Management:**
-    * [ ] Develop APIs for processing full or partial refunds.
-
-## 4. Notifications & Communication
-
-* [ ] **Email/SMS Confirmations:**
-    * [ ] Send automated booking confirmations upon successful registration/payment.
-    * [ ] Send cancellation/rescheduling notifications.
-* [ ] **Automated Reminders:**
-    * [ ] Implement scheduled reminders for upcoming bookings (e.g., 24 hours before).
-* [ ] **Status Change Alerts:**
-    * [ ] Notify users/organizers of critical booking status changes.
-
-## 5. User & Admin Dashboards
-
-* [ ] **User Dashboard APIs:**
-    * [ ] `GET /api/v1/my-bookings`: Retrieve all upcoming and past bookings for the authenticated user.
-    * [ ] `PUT /api/v1/my-bookings/{bookingId}/cancel`: Allow users to cancel their own bookings (with policy enforcement).
-    * [ ] `PUT /api/v1/my-bookings/{bookingId}/reschedule-request`: Allow users to request rescheduling.
-* [ ] **Admin/Organizer Dashboard APIs:**
-    * [ ] `GET /api/v1/bookings`: Retrieve all bookings with filtering/sorting options (Admin).
-    * [ ] `GET /api/v1/bookings/item/{itemId}`: Retrieve all bookings for a specific `BookableItem` (Organizer/Admin).
-    * [ ] `PUT /api/v1/bookings/{bookingId}/status`: Update booking status manually (Admin/Organizer).
-    * [ ] Basic reporting APIs (e.g., total bookings, revenue by item/category).
-    * [ ] Export booking data (CSV/Excel).
-
-## 6. Discovery & Feedback
-
-* [ ] **Advanced Search & Filtering:**
-    * [ ] Enhance search capabilities for `BookableItem`s (by date range, location, category, price, organizer).
-    * [ ] Implement filtering and sorting options for listing items.
-* [ ] **Reviews and Ratings:**
-    * [ ] `POST /api/v1/bookings/{bookingId}/review`: Allow users to submit reviews/ratings for completed bookings.
-    * [ ] `GET /api/v1/bookable-items/{itemId}/reviews`: Retrieve reviews for a specific item.
-    * [ ] Admin moderation for reviews.
-
-## 7. Technical Enhancements
-
-* [ ] **Logging & Monitoring:**
-    * [ ] Implement comprehensive logging (e.g., using Logback, ELK stack).
-    * [ ] Integrate with monitoring tools (e.g., Prometheus, Grafana).
-* [ ] **Asynchronous Processing:**
-    * [ ] Leverage Spring's `@Async` or message queues (e.g., RabbitMQ, Kafka) for non-critical tasks like sending notifications.
-* [ ] **Caching:**
-    * [ ] Implement caching for frequently accessed data (e.g., event lists, user profiles) to improve performance.
-* [ ] **API Versioning:**
-    * [ ] Consider API versioning strategy (e.g., `/api/v2/events`) for future changes.
-* [ ] **Containerization:**
-    * [ ] Dockerize the application for easier deployment.
-* [ ] **CI/CD Pipeline:**
-    * [ ] Set up continuous integration and continuous deployment.
