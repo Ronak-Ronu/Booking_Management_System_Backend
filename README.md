@@ -579,3 +579,113 @@ The API provides consistent error responses through a `GlobalExceptionHandler`:
 * **`404 Not Found`**: For resources not found (`ResourceNotFoundException`).
 * **`409 Conflict`**: For resource creation conflicts (e.g., `UserAlreadyExistsException`).
 * **`500 Internal Server Error`**: For unexpected server-side errors.
+
+# Booking Management System - TODO Features
+
+This document outlines the planned features and enhancements to evolve the current Event Management system into a comprehensive Booking Management System. Each item represents a potential area for development.
+
+---
+
+## Table of Contents
+
+1.  [Core Booking Functionality](#1-core-booking-functionality)
+2.  [Scheduling & Availability](#2-scheduling--availability)
+3.  [Financial & Payment](#3-financial--payment)
+4.  [Notifications & Communication](#4-notifications--communication)
+5.  [User & Admin Dashboards](#5-user--admin-dashboards)
+6.  [Discovery & Feedback](#6-discovery--feedback)
+7.  [Technical Enhancements](#7-technical-enhancements)
+
+---
+
+## 1. Core Booking Functionality
+
+* [ ] **Generalize Bookable Items:**
+    * [ ] Introduce a generic `BookableItem` entity (or refactor `Event` to be more abstract) to represent various types of bookable resources/services (e.g., appointments, meeting rooms, classes).
+    * [ ] Implement API endpoints for CRUD operations on `BookableItem` types.
+* [ ] **Categorization of Bookable Items:**
+    * [ ] Add a categorization system (e.g., "Sports," "Health," "Education") for `BookableItem`s.
+    * [ ] Implement APIs for managing categories.
+* [ ] **Booking Status Transitions:**
+    * [ ] Define clear state machine for booking statuses (e.g., `PENDING`, `CONFIRMED`, `CANCELLED`, `COMPLETED`, `NO_SHOW`).
+    * [ ] Implement APIs to update booking status.
+
+## 2. Scheduling & Availability
+
+* [ ] **Time Slot Management:**
+    * [ ] Implement functionality to define specific time slots for `BookableItem`s (e.g., 1-hour slots for appointments).
+    * [ ] APIs to create, update, and delete time slots.
+* [ ] **Recurring Bookings:**
+    * [ ] Add support for defining recurring schedules for `BookableItem`s (e.g., weekly classes).
+    * [ ] Implement APIs for managing recurring patterns.
+* [ ] **Capacity Management:**
+    * [ ] Enforce maximum capacity for each `BookableItem` or time slot.
+    * [ ] Implement logic to decrement/increment available slots upon booking/cancellation.
+* [ ] **Waitlist Functionality:**
+    * [ ] Allow users to join a waitlist if a `BookableItem` or slot is fully booked.
+    * [ ] Implement notification system for waitlisted users when a spot opens up.
+* [ ] **Calendar Availability API:**
+    * [ ] Develop an API to query available time slots/items for a given date range, suitable for front-end calendar integration.
+
+## 3. Financial & Payment
+
+* [ ] **Payment Integration:**
+    * [ ] Integrate with a payment gateway (e.g., Stripe, PayPal) for processing payments.
+    * [ ] Create `Payment` or `Transaction` entity to record payment details and status.
+* [ ] **Pricing Models:**
+    * [ ] Implement flexible pricing for `BookableItem`s (e.g., fixed price, per-person, per-hour).
+    * [ ] APIs for managing pricing.
+* [ ] **Discount Codes/Promotions:**
+    * [ ] Implement functionality for creating and validating discount codes.
+    * [ ] Apply discounts during the booking process.
+* [ ] **Refund Management:**
+    * [ ] Develop APIs for processing full or partial refunds.
+
+## 4. Notifications & Communication
+
+* [ ] **Email/SMS Confirmations:**
+    * [ ] Send automated booking confirmations upon successful registration/payment.
+    * [ ] Send cancellation/rescheduling notifications.
+* [ ] **Automated Reminders:**
+    * [ ] Implement scheduled reminders for upcoming bookings (e.g., 24 hours before).
+* [ ] **Status Change Alerts:**
+    * [ ] Notify users/organizers of critical booking status changes.
+
+## 5. User & Admin Dashboards
+
+* [ ] **User Dashboard APIs:**
+    * [ ] `GET /api/v1/my-bookings`: Retrieve all upcoming and past bookings for the authenticated user.
+    * [ ] `PUT /api/v1/my-bookings/{bookingId}/cancel`: Allow users to cancel their own bookings (with policy enforcement).
+    * [ ] `PUT /api/v1/my-bookings/{bookingId}/reschedule-request`: Allow users to request rescheduling.
+* [ ] **Admin/Organizer Dashboard APIs:**
+    * [ ] `GET /api/v1/bookings`: Retrieve all bookings with filtering/sorting options (Admin).
+    * [ ] `GET /api/v1/bookings/item/{itemId}`: Retrieve all bookings for a specific `BookableItem` (Organizer/Admin).
+    * [ ] `PUT /api/v1/bookings/{bookingId}/status`: Update booking status manually (Admin/Organizer).
+    * [ ] Basic reporting APIs (e.g., total bookings, revenue by item/category).
+    * [ ] Export booking data (CSV/Excel).
+
+## 6. Discovery & Feedback
+
+* [ ] **Advanced Search & Filtering:**
+    * [ ] Enhance search capabilities for `BookableItem`s (by date range, location, category, price, organizer).
+    * [ ] Implement filtering and sorting options for listing items.
+* [ ] **Reviews and Ratings:**
+    * [ ] `POST /api/v1/bookings/{bookingId}/review`: Allow users to submit reviews/ratings for completed bookings.
+    * [ ] `GET /api/v1/bookable-items/{itemId}/reviews`: Retrieve reviews for a specific item.
+    * [ ] Admin moderation for reviews.
+
+## 7. Technical Enhancements
+
+* [ ] **Logging & Monitoring:**
+    * [ ] Implement comprehensive logging (e.g., using Logback, ELK stack).
+    * [ ] Integrate with monitoring tools (e.g., Prometheus, Grafana).
+* [ ] **Asynchronous Processing:**
+    * [ ] Leverage Spring's `@Async` or message queues (e.g., RabbitMQ, Kafka) for non-critical tasks like sending notifications.
+* [ ] **Caching:**
+    * [ ] Implement caching for frequently accessed data (e.g., event lists, user profiles) to improve performance.
+* [ ] **API Versioning:**
+    * [ ] Consider API versioning strategy (e.g., `/api/v2/events`) for future changes.
+* [ ] **Containerization:**
+    * [ ] Dockerize the application for easier deployment.
+* [ ] **CI/CD Pipeline:**
+    * [ ] Set up continuous integration and continuous deployment.

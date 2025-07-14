@@ -1,7 +1,6 @@
-// src/main/java/com/ronak/welcome/entity/EventRegistration.java
 package com.ronak.welcome.entity;
 
-import com.ronak.welcome.enums.EventStatus; // Import your enum
+import com.ronak.welcome.enums.EventStatus;
 import jakarta.persistence.*;
 import lombok.Data;
 import lombok.NoArgsConstructor;

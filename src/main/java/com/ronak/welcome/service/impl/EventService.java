@@ -1,111 +1,66 @@
+// src/main/java/com/ronak/welcome/service/EventService.java
 package com.ronak.welcome.service.impl;
 
-
-import com.ronak.welcome.DTO.EventRequest;
-import com.ronak.welcome.DTO.EventResponse;
-import com.ronak.welcome.entity.Event;
-import com.ronak.welcome.entity.User;
-import com.ronak.welcome.enums.Role;
+import com.ronak.welcome.DTO.BookableItemRequest;
+import com.ronak.welcome.DTO.BookableItemResponse;
+import com.ronak.welcome.enums.BookableItemType;
 import com.ronak.welcome.exception.ResourceNotFoundException;
-import com.ronak.welcome.repository.EventRepository;
-import com.ronak.welcome.repository.UserRepository;
-import jakarta.transaction.Transactional;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.security.core.context.SecurityContextHolder; // Import for current user info
 
 import java.util.List;
-import java.util.stream.Collectors;
 
 @Service
 public class EventService {
 
-    private final EventRepository eventRepository;
-    private final UserRepository userRepository;
+    private final BookableItemService bookableItemService;
 
-    public EventService(EventRepository eventRepository, UserRepository userRepository) {
-        this.eventRepository = eventRepository;
-        this.userRepository = userRepository;
+    public EventService(BookableItemService bookableItemService) {
+        this.bookableItemService = bookableItemService;
     }
 
     @Transactional
-    public EventResponse createEvent(EventRequest eventRequest, String organizerUsername) {
-        User organizer = userRepository.findByUsername(organizerUsername)
-                .orElseThrow(() -> new ResourceNotFoundException("Organizer not found: " + organizerUsername));
-
-        Event event = new Event();
-        event.setName(eventRequest.name());
-        event.setDescription(eventRequest.description());
-        event.setEventDate(eventRequest.eventDate());
-        event.setLocation(eventRequest.location());
-        event.setOrganizer(organizer);
-
-        Event savedEvent = eventRepository.save(event);
-        return mapToEventResponse(savedEvent);
-    }
-
-    @Transactional
-    public EventResponse getEventById(Long id) {
-        Event event = eventRepository.findById(id)
-                .orElseThrow(() -> new ResourceNotFoundException("Event not found with ID: " + id));
-        return mapToEventResponse(event);
-    }
-
-    @Transactional
-    public List<EventResponse> getAllEvents() {
-        return eventRepository.findAll().stream()
-                .map(this::mapToEventResponse)
-                .collect(Collectors.toList());
-    }
-
-    @Transactional
-    public EventResponse updateEvent(Long id, EventRequest eventRequest, String currentUsername) {
-        Event existingEvent = eventRepository.findById(id)
-                .orElseThrow(() -> new ResourceNotFoundException("Event not found with ID: " + id));
-
-        // Authorization check: Only the organizer or an ADMIN can update the event
-        User currentUser = userRepository.findByUsername(currentUsername)
-                .orElseThrow(() -> new ResourceNotFoundException("Current user not found: " + currentUsername));
-
-        if (!existingEvent.getOrganizer().getId().equals(currentUser.getId()) && !currentUser.getRoles().contains(Role.ADMIN)) {
-            throw new SecurityException("You are not authorized to update this event.");
+    public BookableItemResponse createEvent(BookableItemRequest eventRequest, String organizerUsername) {
+        if (eventRequest.type() != BookableItemType.EVENT) {
+            throw new IllegalArgumentException("Event creation must have type set to EVENT.");
         }
+        return bookableItemService.createBookableItem(eventRequest, organizerUsername);
+    }
 
-        existingEvent.setName(eventRequest.name());
-        existingEvent.setDescription(eventRequest.description());
-        existingEvent.setEventDate(eventRequest.eventDate());
-        existingEvent.setLocation(eventRequest.location());
+    @Transactional(readOnly = true)
+    public BookableItemResponse getEventById(Long id) {
+        String currentUsername = SecurityContextHolder.getContext().getAuthentication().getName();
+        BookableItemResponse item = bookableItemService.getBookableItemById(id, currentUsername); // Pass username
+        if (item.type() != BookableItemType.EVENT) {
+            throw new ResourceNotFoundException("Item with ID " + id + " is not an event.");
+        }
+        return item;
+    }
 
-        Event updatedEvent = eventRepository.save(existingEvent);
-        return mapToEventResponse(updatedEvent);
+    @Transactional(readOnly = true)
+    public List<BookableItemResponse> getAllEvents() {
+        String currentUsername = SecurityContextHolder.getContext().getAuthentication().getName();
+        // Delegate to BookableItemService to get items of type EVENT, respecting private flag
+        return bookableItemService.getBookableItemsByType(BookableItemType.EVENT, currentUsername); // Pass username
+    }
+
+    @Transactional
+    public BookableItemResponse updateEvent(Long id, BookableItemRequest eventRequest, String currentUsername) {
+        if (eventRequest.type() != BookableItemType.EVENT) {
+            throw new IllegalArgumentException("Event update must have type set to EVENT.");
+        }
+        return bookableItemService.updateBookableItem(id, eventRequest, currentUsername);
     }
 
     @Transactional
     public void deleteEvent(Long id, String currentUsername) {
-        Event existingEvent = eventRepository.findById(id)
-                .orElseThrow(() -> new ResourceNotFoundException("Event not found with ID: " + id));
-
-        // Authorization check: Only the organizer or an ADMIN can delete the event
-        User currentUser = userRepository.findByUsername(currentUsername)
-                .orElseThrow(() -> new ResourceNotFoundException("Current user not found: " + currentUsername));
-
-        if (!existingEvent.getOrganizer().getId().equals(currentUser.getId()) && !currentUser.getRoles().contains(Role.ADMIN)) {
-            throw new SecurityException("You are not authorized to delete this event.");
+        // Before deleting, ensure it's an event (good for type safety)
+        // Note: getBookableItemById now requires currentUsername
+        BookableItemResponse item = bookableItemService.getBookableItemById(id, currentUsername);
+        if (item.type() != BookableItemType.EVENT) {
+            throw new ResourceNotFoundException("Item with ID " + id + " is not an event and cannot be deleted via EventService.");
         }
-
-        eventRepository.delete(existingEvent);
-    }
-
-    // Helper method to map Event entity to EventResponse DTO
-    private EventResponse mapToEventResponse(Event event) {
-        return new EventResponse(
-                event.getId(),
-                event.getName(),
-                event.getDescription(),
-                event.getEventDate(),
-                event.getLocation(),
-                event.getOrganizer().getId(),
-                event.getOrganizer().getUsername(),
-                event.getCreatedAt(),
-                event.getUpdatedAt()
-        );
+        bookableItemService.deleteBookableItem(id, currentUsername);
     }
 }

@@ -1,8 +1,8 @@
+// src/main/java/com/ronak/welcome/controllers/EventController.java
 package com.ronak.welcome.controllers;
 
-
-import com.ronak.welcome.DTO.EventRequest;
-import com.ronak.welcome.DTO.EventResponse;
+import com.ronak.welcome.DTO.BookableItemRequest;
+import com.ronak.welcome.DTO.BookableItemResponse;
 import com.ronak.welcome.service.impl.EventService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -22,44 +22,42 @@ public class EventController {
 
     private final EventService eventService;
 
-    // Create a new event (only users with an EVENT_ORGANIZER or ADMIN role)
     @PostMapping
     @PreAuthorize("hasRole('EVENT_ORGANIZER') or hasRole('ADMIN')")
-    public ResponseEntity<EventResponse> createEvent(@Valid @RequestBody EventRequest eventRequest) {
+    public ResponseEntity<BookableItemResponse> createEvent(@Valid @RequestBody BookableItemRequest eventRequest) {
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
-        String organizerUsername = authentication.getName(); // Get username of the logged-in organizer
-        EventResponse createdEvent = eventService.createEvent(eventRequest, organizerUsername);
+        String organizerUsername = authentication.getName();
+        BookableItemResponse createdEvent = eventService.createEvent(eventRequest, organizerUsername);
         return ResponseEntity.status(HttpStatus.CREATED).body(createdEvent);
     }
 
-    // Get event by ID (publicly accessible)
+    // Get event by ID (publicly accessible, but service will enforce private access)
     @GetMapping("/{id}")
-    public ResponseEntity<EventResponse> getEventById(@PathVariable Long id) {
-        EventResponse event = eventService.getEventById(id);
+    public ResponseEntity<BookableItemResponse> getEventById(@PathVariable Long id) {
+        // The service layer will handle whether the current user can view this private item
+        BookableItemResponse event = eventService.getEventById(id);
         return ResponseEntity.ok(event);
     }
 
-    // Get all events (publicly accessible)
+    // Get all events (publicly accessible, but service will filter private items)
     @GetMapping
-    public ResponseEntity<List<EventResponse>> getAllEvents() {
-        List<EventResponse> events = eventService.getAllEvents();
+    public ResponseEntity<List<BookableItemResponse>> getAllEvents() {
+        // The service layer will filter private events based on the current user's roles
+        List<BookableItemResponse> events = eventService.getAllEvents();
         return ResponseEntity.ok(events);
     }
 
-    // Update an event (only the organizer who created it OR ADMIN)
     @PutMapping("/{id}")
-    // @eventService.getEventById(#id).organizerUsername == authentication.name ensures only the creator can update
-    @PreAuthorize("hasRole('ADMIN') or @eventService.getEventById(#id).organizerUsername == authentication.name")
-    public ResponseEntity<EventResponse> updateEvent(@PathVariable Long id, @Valid @RequestBody EventRequest eventRequest) {
+    @PreAuthorize("hasRole('ADMIN') or @eventService.getEventById(#id).providerUsername() == authentication.name")
+    public ResponseEntity<BookableItemResponse> updateEvent(@PathVariable Long id, @Valid @RequestBody BookableItemRequest eventRequest) {
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
         String currentUsername = authentication.getName();
-        EventResponse updatedEvent = eventService.updateEvent(id, eventRequest, currentUsername);
+        BookableItemResponse updatedEvent = eventService.updateEvent(id, eventRequest, currentUsername);
         return ResponseEntity.ok(updatedEvent);
     }
 
-    // Delete an event (only the organizer who created it OR ADMIN)
     @DeleteMapping("/{id}")
-    @PreAuthorize("hasRole('ADMIN') or @eventService.getEventById(#id).organizerUsername == authentication.name")
+    @PreAuthorize("hasRole('ADMIN') or @eventService.getEventById(#id).providerUsername() == authentication.name")
     public ResponseEntity<Void> deleteEvent(@PathVariable Long id) {
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
         String currentUsername = authentication.getName();
