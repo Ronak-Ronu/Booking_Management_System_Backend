@@ -3,6 +3,7 @@ package com.ronak.welcome.service.impl;
 
 import com.ronak.welcome.DTO.BookableItemRequest;
 import com.ronak.welcome.DTO.BookableItemResponse;
+import com.ronak.welcome.DTO.PriceTier; // Import PriceTier
 import com.ronak.welcome.entity.BookableItem;
 import com.ronak.welcome.entity.Event;
 import com.ronak.welcome.entity.User;
@@ -11,12 +12,14 @@ import com.ronak.welcome.enums.Role;
 import com.ronak.welcome.exception.ResourceNotFoundException;
 import com.ronak.welcome.exception.ValidationException;
 import com.ronak.welcome.repository.BookableItemRepository;
+import com.ronak.welcome.repository.BookingRepository; // Needed for current booking count
 import com.ronak.welcome.repository.UserRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.security.core.context.SecurityContextHolder; // Import for current user info
+import org.springframework.security.core.context.SecurityContextHolder;
 
 import java.time.LocalDateTime;
+import java.util.Comparator;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -25,10 +28,14 @@ public class BookableItemService {
 
     private final BookableItemRepository bookableItemRepository;
     private final UserRepository userRepository;
+    private final BookingRepository bookingRepository; // Inject BookingRepository for price calculation
 
-    public BookableItemService(BookableItemRepository bookableItemRepository, UserRepository userRepository) {
+    public BookableItemService(BookableItemRepository bookableItemRepository,
+                               UserRepository userRepository,
+                               BookingRepository bookingRepository) {
         this.bookableItemRepository = bookableItemRepository;
         this.userRepository = userRepository;
+        this.bookingRepository = bookingRepository;
     }
 
     @Transactional
@@ -60,23 +67,22 @@ public class BookableItemService {
         bookableItem.setEndTime(request.endTime());
         bookableItem.setLocation(request.location());
         bookableItem.setCapacity(request.capacity());
-        bookableItem.setPrice(request.price());
+        bookableItem.setPrice(request.price()); // Base price
         bookableItem.setType(request.type());
         bookableItem.setProvider(provider);
-        bookableItem.setPrivate(request.isPrivate()); // SET THE IS_PRIVATE FIELD
+        bookableItem.setPrivate(request.isPrivate());
+        bookableItem.setPriceTiers(request.priceTiers()); // SET THE PRICE TIERS
 
         BookableItem savedItem = bookableItemRepository.save(bookableItem);
         return mapToBookableItemResponse(savedItem);
     }
 
     @Transactional(readOnly = true)
-    public BookableItemResponse getBookableItemById(Long id, String currentUsername) { // Added currentUsername
+    public BookableItemResponse getBookableItemById(Long id, String currentUsername) {
         BookableItem item = bookableItemRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Bookable item not found with ID: " + id));
 
-        // Check if the item is private and if the current user has permission to view it
         if (item.isPrivate()) {
-            // If no user is logged in, or if the logged-in user is not the provider and not an ADMIN
             if (currentUsername == null || currentUsername.isEmpty() ||
                     (!item.getProvider().getUsername().equals(currentUsername) &&
                             !userRepository.findByUsername(currentUsername).map(u -> u.getRoles().contains(Role.ADMIN)).orElse(false))) {
@@ -87,36 +93,34 @@ public class BookableItemService {
     }
 
     @Transactional(readOnly = true)
-    public List<BookableItemResponse> getAllBookableItems(String currentUsername) { // Added currentUsername
+    public List<BookableItemResponse> getAllBookableItems(String currentUsername) {
         User currentUser = currentUsername != null && !currentUsername.isEmpty() ?
                 userRepository.findByUsername(currentUsername).orElse(null) :
                 null;
 
         return bookableItemRepository.findAll().stream()
                 .filter(item -> {
-                    // Only show private items to their provider or ADMIN
                     if (item.isPrivate()) {
                         return currentUser != null && (item.getProvider().getId().equals(currentUser.getId()) || currentUser.getRoles().contains(Role.ADMIN));
                     }
-                    return true; // Always show public items
+                    return true;
                 })
                 .map(this::mapToBookableItemResponse)
                 .collect(Collectors.toList());
     }
 
     @Transactional(readOnly = true)
-    public List<BookableItemResponse> getBookableItemsByType(BookableItemType type, String currentUsername) { // Added currentUsername
+    public List<BookableItemResponse> getBookableItemsByType(BookableItemType type, String currentUsername) {
         User currentUser = currentUsername != null && !currentUsername.isEmpty() ?
                 userRepository.findByUsername(currentUsername).orElse(null) :
                 null;
 
         return bookableItemRepository.findByType(type).stream()
                 .filter(item -> {
-                    // Only show private items to their provider or ADMIN
                     if (item.isPrivate()) {
                         return currentUser != null && (item.getProvider().getId().equals(currentUser.getId()) || currentUser.getRoles().contains(Role.ADMIN));
                     }
-                    return true; // Always show public items
+                    return true;
                 })
                 .map(this::mapToBookableItemResponse)
                 .collect(Collectors.toList());
@@ -148,11 +152,11 @@ public class BookableItemService {
         existingItem.setEndTime(request.endTime());
         existingItem.setLocation(request.location());
         existingItem.setCapacity(request.capacity());
-        existingItem.setPrice(request.price());
+        existingItem.setPrice(request.price()); // Base price
         existingItem.setType(request.type());
-        existingItem.setPrivate(request.isPrivate()); // UPDATE THE IS_PRIVATE FIELD
+        existingItem.setPrivate(request.isPrivate());
+        existingItem.setPriceTiers(request.priceTiers()); // UPDATE THE PRICE TIERS
 
-        // Handle updating event-specific field if the existing item is an Event
         if (existingItem instanceof Event) {
             ((Event) existingItem).setEventSpecificField(request.eventSpecificField());
         }
@@ -176,12 +180,59 @@ public class BookableItemService {
         bookableItemRepository.delete(existingItem);
     }
 
+    /**
+     * Calculates the effective price of a bookable item based on its price tiers,
+     * current time, and current number of bookings.
+     *
+     * @param bookableItem The BookableItem for which to calculate the price.
+     * @return The effective price.
+     */
+    public double calculateEffectivePrice(BookableItem bookableItem) {
+        if (bookableItem.getPriceTiers() == null || bookableItem.getPriceTiers().isEmpty()) {
+            return bookableItem.getPrice(); // Return base price if no tiers are defined
+        }
+
+        LocalDateTime now = LocalDateTime.now();
+        long currentBookingsCount = bookingRepository.findByBookableItem(bookableItem).stream()
+                .filter(b -> b.getStatus() == com.ronak.welcome.enums.BookingStatus.CONFIRMED || b.getStatus() == com.ronak.welcome.enums.BookingStatus.PENDING)
+                .count();
+
+        // Sort tiers by startDate (earliest first) and then by maxQuantity (smallest first)
+        // This ensures that "early bird" tiers are considered first, and then smaller quantity tiers.
+        List<PriceTier> sortedTiers = bookableItem.getPriceTiers().stream()
+                .sorted(Comparator
+                        .comparing(PriceTier::startDate)
+                        .thenComparing(PriceTier::maxQuantity))
+                .collect(Collectors.toList());
+
+        for (PriceTier tier : sortedTiers) {
+            // Check time-based validity
+            boolean isTimeValid = (now.isEqual(tier.startDate()) || now.isAfter(tier.startDate())) &&
+                    (now.isEqual(tier.endDate()) || now.isBefore(tier.endDate()));
+
+            // Check quantity-based validity
+            boolean isQuantityValid = currentBookingsCount >= tier.minQuantity() &&
+                    currentBookingsCount < tier.maxQuantity(); // Use < for maxQuantity to define the range for this tier
+
+            if (isTimeValid && isQuantityValid) {
+                return tier.price();
+            }
+        }
+
+        // If no specific tier applies, return the base price
+        return bookableItem.getPrice();
+    }
+
+
     // Helper method to map BookableItem entity to BookableItemResponse DTO
     private BookableItemResponse mapToBookableItemResponse(BookableItem item) {
         String eventSpecificField = null;
         if (item instanceof Event) {
             eventSpecificField = ((Event) item).getEventSpecificField();
         }
+
+        // Calculate the effective price when mapping to response
+        double effectivePrice = calculateEffectivePrice(item);
 
         return new BookableItemResponse(
                 item.getId(),
@@ -191,14 +242,15 @@ public class BookableItemService {
                 item.getEndTime(),
                 item.getLocation(),
                 item.getCapacity(),
-                item.getPrice(),
+                effectivePrice, // Use the effective price here
                 item.getType(),
                 item.getProvider().getId(),
                 item.getProvider().getUsername(),
                 item.getCreatedAt(),
                 item.getUpdatedAt(),
                 eventSpecificField,
-                item.isPrivate() // INCLUDE IS_PRIVATE IN RESPONSE
+                item.isPrivate(),
+                item.getPriceTiers() // Include the raw price tiers in the response
         );
     }
 }

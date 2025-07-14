@@ -1,19 +1,21 @@
-// src/main/java/com/ronak/welcome/service/impl/BookingService.java
-package com.ronak.welcome.service.impl; // Assuming this is the correct package based on your input
+// src/main/java/com/ronak/welcome/service/BookingService.java
+package com.ronak.welcome.service.impl; // Changed package to service
 
 import com.ronak.welcome.DTO.BookingRequest;
 import com.ronak.welcome.DTO.BookingResponse;
 import com.ronak.welcome.entity.BookableItem;
 import com.ronak.welcome.entity.Booking;
 import com.ronak.welcome.entity.User;
+import com.ronak.welcome.enums.BookableItemType;
 import com.ronak.welcome.enums.BookingStatus;
+import com.ronak.welcome.enums.Role;
 import com.ronak.welcome.exception.ResourceNotFoundException;
 import com.ronak.welcome.exception.ValidationException;
 import com.ronak.welcome.repository.BookableItemRepository;
 import com.ronak.welcome.repository.BookingRepository;
 import com.ronak.welcome.repository.UserRepository;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional; // ADD THIS IMPORT (Spring's @Transactional)
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 import java.util.stream.Collectors;
@@ -40,17 +42,39 @@ public class BookingService {
         BookableItem bookableItem = bookableItemRepository.findById(request.bookableItemId())
                 .orElseThrow(() -> new ResourceNotFoundException("Bookable item not found with ID: " + request.bookableItemId()));
 
-        // Add capacity check
-        long currentBookings = bookingRepository.findByBookableItem(bookableItem).stream()
-                .filter(b -> b.getStatus() == BookingStatus.CONFIRMED || b.getStatus() == BookingStatus.PENDING)
-                .count();
-        if (currentBookings >= bookableItem.getCapacity()) {
-            throw new ValidationException("Bookable item '" + bookableItem.getName() + "' is fully booked.");
-        }
-
+        // 1. Prevent duplicate bookings for the same user and item
         if (bookingRepository.findByUserAndBookableItem(user, bookableItem).isPresent()) {
             throw new ValidationException("User " + username + " is already booked for item " + bookableItem.getName());
         }
+
+        // 2. Capacity-based conflict detection (for items with limited spots like events/classes)
+        // This check is relevant if the booking consumes a 'slot' from the item's total capacity.
+        // It's generally applicable to all BookableItemTypes that have a finite 'capacity'.
+        long currentConfirmedOrPendingBookings = bookingRepository.findByBookableItem(bookableItem).stream()
+                .filter(b -> b.getStatus() == BookingStatus.CONFIRMED || b.getStatus() == BookingStatus.PENDING)
+                .count();
+        if (currentConfirmedOrPendingBookings >= bookableItem.getCapacity()) {
+            throw new ValidationException("Bookable item '" + bookableItem.getName() + "' is fully booked.");
+        }
+
+        // 3. Time-based conflict detection (for items that occupy a specific time slot, like appointments/resources)
+        // This check is crucial if the bookable item itself represents a single, time-bound resource.
+        // For events where multiple people can book the same time, this check might not be needed.
+        // We'll apply it if the BookableItem has a defined endTime.
+        if (bookableItem.getEndTime() != null) { // Only perform time-based check if item has an end time
+            List<Booking> overlappingBookings = bookingRepository.findOverlappingBookings(
+                    bookableItem,
+                    bookableItem.getStartTime(), // Use the item's start time as the booking's desired start
+                    bookableItem.getEndTime()    // Use the item's end time as the booking's desired end
+            );
+
+            // If there's already a confirmed/pending booking for this time-bound item, it means it's occupied.
+            // This assumes a BookableItem with an endTime can only be booked by one user at a time.
+            if (!overlappingBookings.isEmpty()) {
+                throw new ValidationException("Bookable item '" + bookableItem.getName() + "' is already booked for the requested time slot.");
+            }
+        }
+
 
         Booking booking = new Booking();
         booking.setUser(user);
@@ -61,7 +85,7 @@ public class BookingService {
         return mapToBookingResponse(savedBooking);
     }
 
-    @Transactional(readOnly = true) // This is now valid with Spring's @Transactional
+    @Transactional(readOnly = true)
     public List<BookingResponse> getUserBookings(String username) {
         User user = userRepository.findByUsername(username)
                 .orElseThrow(() -> new ResourceNotFoundException("User not found: " + username));
@@ -70,7 +94,7 @@ public class BookingService {
                 .collect(Collectors.toList());
     }
 
-    @Transactional(readOnly = true) // This is now valid with Spring's @Transactional
+    @Transactional(readOnly = true)
     public List<BookingResponse> getBookingsByBookableItemId(Long bookableItemId, String currentUsername) {
         BookableItem bookableItem = bookableItemRepository.findById(bookableItemId)
                 .orElseThrow(() -> new ResourceNotFoundException("Bookable item not found with ID: " + bookableItemId));
@@ -78,8 +102,7 @@ public class BookingService {
         User currentUser = userRepository.findByUsername(currentUsername)
                 .orElseThrow(() -> new ResourceNotFoundException("Current user not found: " + currentUsername));
 
-        // Authorization check: Only the provider of the item or an ADMIN can view all bookings for an item
-        if (!bookableItem.getProvider().getId().equals(currentUser.getId()) && !currentUser.getRoles().contains(com.ronak.welcome.enums.Role.ADMIN)) {
+        if (!bookableItem.getProvider().getId().equals(currentUser.getId()) && !currentUser.getRoles().contains(Role.ADMIN)) {
             throw new SecurityException("You are not authorized to view all bookings for this item.");
         }
 
@@ -96,12 +119,10 @@ public class BookingService {
         User user = userRepository.findByUsername(username)
                 .orElseThrow(() -> new ResourceNotFoundException("User not found: " + username));
 
-        // Authorization: Only the user who made the booking or an ADMIN can cancel
-        if (!booking.getUser().getId().equals(user.getId()) && !user.getRoles().contains(com.ronak.welcome.enums.Role.ADMIN)) {
+        if (!booking.getUser().getId().equals(user.getId()) && !user.getRoles().contains(Role.ADMIN)) {
             throw new SecurityException("You are not authorized to cancel this booking.");
         }
 
-        // Prevent cancelling already cancelled/completed bookings
         if (booking.getStatus() == BookingStatus.CANCELLED || booking.getStatus() == BookingStatus.COMPLETED) {
             throw new ValidationException("Booking cannot be cancelled as it is already " + booking.getStatus().name());
         }
@@ -111,6 +132,11 @@ public class BookingService {
     }
 
     private BookingResponse mapToBookingResponse(Booking booking) {
+        String eventSpecificField = null;
+        if (booking.getBookableItem() instanceof com.ronak.welcome.entity.Event) { // Fully qualified name
+            eventSpecificField = ((com.ronak.welcome.entity.Event) booking.getBookableItem()).getEventSpecificField();
+        }
+
         return new BookingResponse(
                 booking.getId(),
                 booking.getUser().getId(),

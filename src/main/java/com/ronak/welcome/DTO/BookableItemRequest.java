@@ -7,6 +7,7 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Min;
 import java.time.LocalDateTime;
+import java.util.List; // For the list of price tiers
 
 public record BookableItemRequest(
         @NotBlank(message = "Name cannot be blank")
@@ -27,11 +28,14 @@ public record BookableItemRequest(
         int capacity,
 
         @Min(value = 0, message = "Price cannot be negative")
-        double price,
+        double price, // Base price
 
         @NotNull(message = "Bookable item type cannot be null")
         BookableItemType type,
 
         String eventSpecificField,
-        boolean isPrivate
+
+        boolean isPrivate,
+
+        List<PriceTier> priceTiers // NEW FIELD: List of pricing tiers
 ) {}
