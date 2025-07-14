@@ -1,5 +1,10 @@
+// src/main/java/com/ronak/welcome/service/impl/UserServiceImpl.java
 package com.ronak.welcome.service.impl;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.ronak.welcome.DTO.UserResponse;
 import com.ronak.welcome.DTO.UserUpdateRequest;
 import com.ronak.welcome.entity.Address;
@@ -9,12 +14,12 @@ import com.ronak.welcome.entity.User;
 import com.ronak.welcome.exception.ResourceNotFoundException;
 import com.ronak.welcome.exception.UserAlreadyExistsException;
 import com.ronak.welcome.repository.OutboxEventRepository;
+import com.ronak.welcome.repository.UserRepository;
+import com.ronak.welcome.service.EmailService; // Keep this import
+import com.ronak.welcome.service.UserService;
 import jakarta.transaction.Transactional;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
-import com.ronak.welcome.repository.UserRepository;
-import com.ronak.welcome.service.EmailService;
-import com.ronak.welcome.service.UserService;
 
 import java.util.List;
 import java.util.stream.Collectors;
@@ -23,16 +28,23 @@ import java.util.stream.Collectors;
 @Service
 public class UserServiceImpl implements UserService {
     public final UserRepository userRepository;
-    private final EmailService emailService;
+    private final EmailService emailService; // This is now your actual EmailServiceImpl
     private final CityServiceImpl cityService;
     private final OutboxEventRepository outboxEventRepository;
     private final PasswordEncoder passwordEncoder;
-    public UserServiceImpl(UserRepository userRepository, EmailService emailService, CityServiceImpl cityService, OutboxEventRepository outboxEventRepository, PasswordEncoder passwordEncoder) {
+    private final ObjectMapper objectMapper;
+
+    public UserServiceImpl(UserRepository userRepository, EmailService emailService,
+                           CityServiceImpl cityService, OutboxEventRepository outboxEventRepository,
+                           PasswordEncoder passwordEncoder) {
         this.userRepository = userRepository;
         this.emailService = emailService;
         this.cityService = cityService;
         this.outboxEventRepository = outboxEventRepository;
         this.passwordEncoder = passwordEncoder;
+        this.objectMapper = new ObjectMapper()
+                .registerModule(new JavaTimeModule())
+                .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
     }
 
     @Override
@@ -57,8 +69,15 @@ public class UserServiceImpl implements UserService {
         }
 
         User savedUser = userRepository.save(user);
-        OutboxEvent event = new OutboxEvent("USER_CREATED", savedUser.getUsername(), savedUser.getEmail(), "PENDING");
-        outboxEventRepository.save(event);
+
+        UserResponse userResponsePayload = new UserResponse(savedUser.getId(), savedUser.getUsername(), savedUser.getEmail(), savedUser.getRoles());
+        try {
+            String payloadJson = objectMapper.writeValueAsString(userResponsePayload);
+            OutboxEvent event = new OutboxEvent("USER_CREATED", payloadJson, savedUser.getEmail());
+            outboxEventRepository.save(event);
+        } catch (JsonProcessingException e) {
+            System.err.println("Failed to create OutboxEvent for user creation " + savedUser.getId() + ": " + e.getMessage());
+        }
 
         return savedUser;
     }
@@ -93,7 +112,6 @@ public class UserServiceImpl implements UserService {
 
         existingUser.setUsername(userUpdateRequest.username());
         existingUser.setEmail(userUpdateRequest.email());
-        // Only update roles if the caller has ADMIN role (enforced by @PreAuthorize in controller)
         if (userUpdateRequest.roles() != null && !userUpdateRequest.roles().isEmpty()) {
             existingUser.setRoles(userUpdateRequest.roles());
         }
@@ -118,4 +136,3 @@ public class UserServiceImpl implements UserService {
         return new UserResponse(user.getId(), user.getUsername(), user.getEmail(), user.getRoles());
     }
 }
-
