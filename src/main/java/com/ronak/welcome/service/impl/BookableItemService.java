@@ -1,9 +1,9 @@
-// src/main/java/com/ronak/welcome/service/BookableItemService.java
+// src/main/java/com/ronak/welcome/service/impl/BookableItemService.java
 package com.ronak.welcome.service.impl;
 
 import com.ronak.welcome.DTO.BookableItemRequest;
 import com.ronak.welcome.DTO.BookableItemResponse;
-import com.ronak.welcome.DTO.PriceTier; // Import PriceTier
+import com.ronak.welcome.DTO.PriceTier;
 import com.ronak.welcome.entity.BookableItem;
 import com.ronak.welcome.entity.Event;
 import com.ronak.welcome.entity.User;
@@ -12,8 +12,11 @@ import com.ronak.welcome.enums.Role;
 import com.ronak.welcome.exception.ResourceNotFoundException;
 import com.ronak.welcome.exception.ValidationException;
 import com.ronak.welcome.repository.BookableItemRepository;
-import com.ronak.welcome.repository.BookingRepository; // Needed for current booking count
+import com.ronak.welcome.repository.BookingRepository;
 import com.ronak.welcome.repository.UserRepository;
+import com.ronak.welcome.util.BookableItemSpecifications;
+import org.springframework.data.domain.Sort;
+import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -21,6 +24,7 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import java.time.LocalDateTime;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Optional;
 import java.util.stream.Collectors;
 
 @Service
@@ -28,7 +32,7 @@ public class BookableItemService {
 
     private final BookableItemRepository bookableItemRepository;
     private final UserRepository userRepository;
-    private final BookingRepository bookingRepository; // Inject BookingRepository for price calculation
+    private final BookingRepository bookingRepository;
 
     public BookableItemService(BookableItemRepository bookableItemRepository,
                                UserRepository userRepository,
@@ -53,12 +57,20 @@ public class BookableItemService {
 
         BookableItem bookableItem;
 
-        if (request.type() == BookableItemType.EVENT) {
-            Event event = new Event();
-            event.setEventSpecificField(request.eventSpecificField());
-            bookableItem = event;
-        } else {
-            throw new ValidationException("Unsupported or unhandled BookableItemType for creation: " + request.type());
+        switch (request.type()) {
+            case EVENT:
+                Event event = new Event();
+                event.setEventSpecificField(request.eventSpecificField());
+                bookableItem = event;
+                break;
+            case APPOINTMENT:
+            case RESOURCE:
+            case CLASS:
+            case SERVICE:
+                bookableItem = new BookableItem();
+                break;
+            default:
+                throw new ValidationException("Unsupported BookableItemType for creation: " + request.type());
         }
 
         bookableItem.setName(request.name());
@@ -67,11 +79,11 @@ public class BookableItemService {
         bookableItem.setEndTime(request.endTime());
         bookableItem.setLocation(request.location());
         bookableItem.setCapacity(request.capacity());
-        bookableItem.setPrice(request.price()); // Base price
+        bookableItem.setPrice(request.price());
         bookableItem.setType(request.type());
         bookableItem.setProvider(provider);
         bookableItem.setPrivate(request.isPrivate());
-        bookableItem.setPriceTiers(request.priceTiers()); // SET THE PRICE TIERS
+        bookableItem.setPriceTiers(request.priceTiers());
 
         BookableItem savedItem = bookableItemRepository.save(bookableItem);
         return mapToBookableItemResponse(savedItem);
@@ -83,9 +95,12 @@ public class BookableItemService {
                 .orElseThrow(() -> new ResourceNotFoundException("Bookable item not found with ID: " + id));
 
         if (item.isPrivate()) {
-            if (currentUsername == null || currentUsername.isEmpty() ||
-                    (!item.getProvider().getUsername().equals(currentUsername) &&
-                            !userRepository.findByUsername(currentUsername).map(u -> u.getRoles().contains(Role.ADMIN)).orElse(false))) {
+            User currentUser = null; // Declare here
+            if (currentUsername != null && !currentUsername.isEmpty()) {
+                currentUser = userRepository.findByUsername(currentUsername).orElse(null);
+            }
+
+            if (currentUser == null || (!item.getProvider().getId().equals(currentUser.getId()) && !currentUser.getRoles().contains(Role.ADMIN))) {
                 throw new SecurityException("You are not authorized to view this private item.");
             }
         }
@@ -94,36 +109,118 @@ public class BookableItemService {
 
     @Transactional(readOnly = true)
     public List<BookableItemResponse> getAllBookableItems(String currentUsername) {
-        User currentUser = currentUsername != null && !currentUsername.isEmpty() ?
-                userRepository.findByUsername(currentUsername).orElse(null) :
-                null;
+        User currentUser = null;
+        if (currentUsername != null && !currentUsername.isEmpty()) {
+            currentUser = userRepository.findByUsername(currentUsername).orElse(null);
+        }
 
-        return bookableItemRepository.findAll().stream()
-                .filter(item -> {
-                    if (item.isPrivate()) {
-                        return currentUser != null && (item.getProvider().getId().equals(currentUser.getId()) || currentUser.getRoles().contains(Role.ADMIN));
-                    }
-                    return true;
-                })
+        Specification<BookableItem> spec = null;
+
+        // --- FIX STARTS HERE ---
+        final User finalCurrentUser = currentUser; // Create an effectively final copy
+
+        // Apply private item visibility rules
+        if (finalCurrentUser == null || !finalCurrentUser.getRoles().contains(Role.ADMIN)) {
+            Specification<BookableItem> visibilitySpec = BookableItemSpecifications.isNotPrivate();
+            if (finalCurrentUser != null) {
+                visibilitySpec = visibilitySpec.or((root, query, criteriaBuilder) -> criteriaBuilder.equal(root.get("provider"), finalCurrentUser));
+            }
+            spec = visibilitySpec;
+        }
+        // --- FIX ENDS HERE ---
+
+        return bookableItemRepository.findAll(spec).stream()
                 .map(this::mapToBookableItemResponse)
                 .collect(Collectors.toList());
     }
 
     @Transactional(readOnly = true)
     public List<BookableItemResponse> getBookableItemsByType(BookableItemType type, String currentUsername) {
-        User currentUser = currentUsername != null && !currentUsername.isEmpty() ?
-                userRepository.findByUsername(currentUsername).orElse(null) :
-                null;
+        User currentUser = null;
+        if (currentUsername != null && !currentUsername.isEmpty()) {
+            currentUser = userRepository.findByUsername(currentUsername).orElse(null);
+        }
 
-        return bookableItemRepository.findByType(type).stream()
-                .filter(item -> {
-                    if (item.isPrivate()) {
-                        return currentUser != null && (item.getProvider().getId().equals(currentUser.getId()) || currentUser.getRoles().contains(Role.ADMIN));
-                    }
-                    return true;
-                })
+        Specification<BookableItem> spec = BookableItemSpecifications.hasType(type);
+
+        // --- FIX STARTS HERE ---
+        final User finalCurrentUser = currentUser; // Create an effectively final copy
+
+        if (finalCurrentUser == null || !finalCurrentUser.getRoles().contains(Role.ADMIN)) {
+            Specification<BookableItem> visibilitySpec = BookableItemSpecifications.isNotPrivate();
+            if (finalCurrentUser != null) {
+                visibilitySpec = visibilitySpec.or((root, query, criteriaBuilder) -> criteriaBuilder.equal(root.get("provider"), finalCurrentUser));
+            }
+            spec = spec.and(visibilitySpec);
+        }
+        // --- FIX ENDS HERE ---
+
+        return bookableItemRepository.findAll(spec).stream()
                 .map(this::mapToBookableItemResponse)
                 .collect(Collectors.toList());
+    }
+
+    @Transactional(readOnly = true)
+    public List<BookableItemResponse> searchBookableItems(
+            String keywords,
+            BookableItemType type,
+            String location,
+            Double minPrice,
+            Double maxPrice,
+            LocalDateTime startDate,
+            LocalDateTime endDate,
+            String sortBy,
+            String sortOrder,
+            String currentUsername) {
+
+        User currentUser = null;
+        if (currentUsername != null && !currentUsername.isEmpty()) {
+            currentUser = userRepository.findByUsername(currentUsername)
+                    .orElseThrow(() -> new ResourceNotFoundException("Current user not found: " + currentUsername));
+        }
+
+        Specification<BookableItem> finalSpec = null;
+
+        // --- FIX STARTS HERE ---
+        final User finalCurrentUser = currentUser; // Create an effectively final copy
+
+        if (finalCurrentUser == null || !finalCurrentUser.getRoles().contains(Role.ADMIN)) {
+            Specification<BookableItem> visibilitySpec = BookableItemSpecifications.isNotPrivate();
+            if (finalCurrentUser != null) {
+                visibilitySpec = visibilitySpec.or((root, query, criteriaBuilder) -> criteriaBuilder.equal(root.get("provider"), finalCurrentUser));
+            }
+            finalSpec = visibilitySpec;
+        }
+        // --- FIX ENDS HERE ---
+
+        finalSpec = combineSpecs(finalSpec, BookableItemSpecifications.hasKeywords(keywords));
+        finalSpec = combineSpecs(finalSpec, BookableItemSpecifications.hasType(type));
+        finalSpec = combineSpecs(finalSpec, BookableItemSpecifications.hasLocation(location));
+        finalSpec = combineSpecs(finalSpec, BookableItemSpecifications.hasMinPrice(minPrice));
+        finalSpec = combineSpecs(finalSpec, BookableItemSpecifications.hasMaxPrice(maxPrice));
+        finalSpec = combineSpecs(finalSpec, BookableItemSpecifications.startsAfter(startDate));
+        finalSpec = combineSpecs(finalSpec, BookableItemSpecifications.endsBefore(endDate));
+
+        Sort sort = Sort.unsorted();
+        if (sortBy != null && !sortBy.isBlank()) {
+            Sort.Direction direction = "desc".equalsIgnoreCase(sortOrder) ? Sort.Direction.DESC : Sort.Direction.ASC;
+            sort = Sort.by(direction, sortBy);
+        }
+
+        List<BookableItem> items = bookableItemRepository.findAll(finalSpec, sort);
+        return items.stream()
+                .map(this::mapToBookableItemResponse)
+                .collect(Collectors.toList());
+    }
+
+    private Specification<BookableItem> combineSpecs(Specification<BookableItem> existingSpec, Specification<BookableItem> newSpec) {
+        if (newSpec == null) {
+            return existingSpec;
+        }
+        if (existingSpec == null) {
+            return newSpec;
+        }
+        return existingSpec.and(newSpec);
     }
 
     @Transactional
@@ -138,10 +235,6 @@ public class BookableItemService {
             throw new SecurityException("You are not authorized to update this bookable item.");
         }
 
-        if (!currentUser.getRoles().contains(Role.ADMIN) && !currentUser.getRoles().contains(Role.EVENT_ORGANIZER)) {
-            throw new SecurityException("Only ADMINs or EVENT_ORGANIZERs can update bookable items.");
-        }
-
         if (request.endTime() != null && request.startTime().isAfter(request.endTime())) {
             throw new ValidationException("Start time cannot be after end time.");
         }
@@ -152,13 +245,17 @@ public class BookableItemService {
         existingItem.setEndTime(request.endTime());
         existingItem.setLocation(request.location());
         existingItem.setCapacity(request.capacity());
-        existingItem.setPrice(request.price()); // Base price
+        existingItem.setPrice(request.price());
         existingItem.setType(request.type());
         existingItem.setPrivate(request.isPrivate());
-        existingItem.setPriceTiers(request.priceTiers()); // UPDATE THE PRICE TIERS
+        existingItem.setPriceTiers(request.priceTiers());
 
-        if (existingItem instanceof Event) {
+        if (existingItem instanceof Event && request.type() == BookableItemType.EVENT) {
             ((Event) existingItem).setEventSpecificField(request.eventSpecificField());
+        } else if (existingItem instanceof Event && request.type() != BookableItemType.EVENT) {
+            throw new ValidationException("Cannot change type from EVENT to " + request.type() + " for existing item.");
+        } else if (request.type() == BookableItemType.EVENT && !(existingItem instanceof BookableItem)) {
+            throw new ValidationException("Cannot change type from " + existingItem.getType() + " to EVENT for existing item.");
         }
 
         BookableItem updatedItem = bookableItemRepository.save(existingItem);
@@ -180,16 +277,9 @@ public class BookableItemService {
         bookableItemRepository.delete(existingItem);
     }
 
-    /**
-     * Calculates the effective price of a bookable item based on its price tiers,
-     * current time, and current number of bookings.
-     *
-     * @param bookableItem The BookableItem for which to calculate the price.
-     * @return The effective price.
-     */
     public double calculateEffectivePrice(BookableItem bookableItem) {
         if (bookableItem.getPriceTiers() == null || bookableItem.getPriceTiers().isEmpty()) {
-            return bookableItem.getPrice(); // Return base price if no tiers are defined
+            return bookableItem.getPrice();
         }
 
         LocalDateTime now = LocalDateTime.now();
@@ -197,8 +287,6 @@ public class BookableItemService {
                 .filter(b -> b.getStatus() == com.ronak.welcome.enums.BookingStatus.CONFIRMED || b.getStatus() == com.ronak.welcome.enums.BookingStatus.PENDING)
                 .count();
 
-        // Sort tiers by startDate (earliest first) and then by maxQuantity (smallest first)
-        // This ensures that "early bird" tiers are considered first, and then smaller quantity tiers.
         List<PriceTier> sortedTiers = bookableItem.getPriceTiers().stream()
                 .sorted(Comparator
                         .comparing(PriceTier::startDate)
@@ -206,32 +294,25 @@ public class BookableItemService {
                 .collect(Collectors.toList());
 
         for (PriceTier tier : sortedTiers) {
-            // Check time-based validity
             boolean isTimeValid = (now.isEqual(tier.startDate()) || now.isAfter(tier.startDate())) &&
                     (now.isEqual(tier.endDate()) || now.isBefore(tier.endDate()));
 
-            // Check quantity-based validity
             boolean isQuantityValid = currentBookingsCount >= tier.minQuantity() &&
-                    currentBookingsCount < tier.maxQuantity(); // Use < for maxQuantity to define the range for this tier
+                    currentBookingsCount < tier.maxQuantity();
 
             if (isTimeValid && isQuantityValid) {
                 return tier.price();
             }
         }
-
-        // If no specific tier applies, return the base price
         return bookableItem.getPrice();
     }
 
-
-    // Helper method to map BookableItem entity to BookableItemResponse DTO
     private BookableItemResponse mapToBookableItemResponse(BookableItem item) {
         String eventSpecificField = null;
         if (item instanceof Event) {
             eventSpecificField = ((Event) item).getEventSpecificField();
         }
 
-        // Calculate the effective price when mapping to response
         double effectivePrice = calculateEffectivePrice(item);
 
         return new BookableItemResponse(
@@ -242,7 +323,7 @@ public class BookableItemService {
                 item.getEndTime(),
                 item.getLocation(),
                 item.getCapacity(),
-                effectivePrice, // Use the effective price here
+                effectivePrice,
                 item.getType(),
                 item.getProvider().getId(),
                 item.getProvider().getUsername(),
@@ -250,7 +331,7 @@ public class BookableItemService {
                 item.getUpdatedAt(),
                 eventSpecificField,
                 item.isPrivate(),
-                item.getPriceTiers() // Include the raw price tiers in the response
+                item.getPriceTiers()
         );
     }
 }

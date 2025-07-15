@@ -18,7 +18,7 @@ import java.util.List; // For the list of price tiers
 @Data
 @NoArgsConstructor
 @Table(name = "bookable_items")
-public abstract class BookableItem {
+public class BookableItem {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)

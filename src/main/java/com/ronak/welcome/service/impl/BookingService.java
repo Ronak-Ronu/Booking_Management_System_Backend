@@ -130,6 +130,14 @@ public class BookingService {
         booking.setStatus(BookingStatus.CANCELLED);
         bookingRepository.save(booking);
     }
+    @Transactional(readOnly = true)
+    public boolean isUserBooking(Long bookingId, String username) {
+        User user = userRepository.findByUsername(username)
+                .orElseThrow(() -> new ResourceNotFoundException("User not found: " + username));
+        return bookingRepository.findById(bookingId)
+                .map(booking -> booking.getUser().getId().equals(user.getId()))
+                .orElse(false);
+    }
 
     private BookingResponse mapToBookingResponse(Booking booking) {
         String eventSpecificField = null;

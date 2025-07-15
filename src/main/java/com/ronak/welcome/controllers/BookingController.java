@@ -71,19 +71,12 @@ public class BookingController {
         return ResponseEntity.ok(bookings);
     }
 
-    /**
-     * Cancels a specific booking.
-     * Accessible by the user who made the booking or an ADMIN.
-     *
-     * @param bookingId The ID of the booking to cancel.
-     * @return ResponseEntity with HTTP status 204 No Content.
-     */
-    @DeleteMapping("/{bookingId}/cancel") // New path for cancellation
-    @PreAuthorize("hasRole('ADMIN') or @bookingService.getUserBookings(authentication.name).stream().anyMatch(b -> b.id() == #bookingId)") // Updated @PreAuthorize
-    public ResponseEntity<Void> cancelBooking(@PathVariable Long bookingId) { // Renamed method and parameter
+    @DeleteMapping("/{bookingId}/cancel")
+    @PreAuthorize("hasRole('ADMIN') or @bookingService.isUserBooking(#bookingId, authentication.name)")
+    public ResponseEntity<Void> cancelBooking(@PathVariable Long bookingId) {
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
         String username = authentication.getName();
-        bookingService.cancelBooking(bookingId, username); // Call new service method
+        bookingService.cancelBooking(bookingId, username);
         return ResponseEntity.noContent().build();
     }
 }
