@@ -1,6 +1,6 @@
 
 # Booking Management System Application API Documentation
-The API documentation for "A booking Management System for "everything"""
+The API documentation for "A booking Management System for "everything""
 
 ---
 
