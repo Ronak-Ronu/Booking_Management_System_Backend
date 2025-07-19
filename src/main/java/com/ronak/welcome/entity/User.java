@@ -38,4 +38,9 @@ public class User {
     @OneToMany(cascade = CascadeType.ALL, mappedBy = "user", fetch = FetchType.LAZY)
     @JsonManagedReference
     private List<Address> addresses;
+
+    private String totpSecret;
+    private boolean totpEnabled = false;
+
+
 }

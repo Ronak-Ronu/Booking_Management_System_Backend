@@ -1,8 +1,10 @@
 package com.ronak.welcome.controllers;
 
 
+import com.ronak.welcome.DTO.TotpVerifyRequest;
 import com.ronak.welcome.DTO.UserResponse;
 import com.ronak.welcome.DTO.UserUpdateRequest;
+import com.ronak.welcome.config.security.TotpService;
 import com.ronak.welcome.entity.User;
 import com.ronak.welcome.repository.UserRepository;
 import jakarta.validation.Valid;
@@ -21,10 +23,12 @@ import java.util.List;
 public class UserController {
     private final UserService userService;
     private final UserRepository userRepository;
+    private final TotpService totpService;
 
-    public UserController(UserService userService, UserRepository userRepository) {
+    public UserController(UserService userService, UserRepository userRepository, TotpService totpService) {
         this.userService = userService;
         this.userRepository = userRepository;
+        this.totpService = totpService;
     }
 
     @PostMapping
@@ -76,6 +80,29 @@ public class UserController {
         userService.deleteUser(id);
         return ResponseEntity.noContent().build();
     }
+    @PostMapping("/totp/verify")
+    public ResponseEntity<?> verifyTotp(@RequestBody TotpVerifyRequest request, Authentication authentication) {
+        // The currently logged-in user
+        String username = authentication.getName();
+        User user = userRepository.findByUsername(username)
+                .orElseThrow(() -> new RuntimeException("User not found"));
 
+        // Check if secret is set (should be, right after /totp/register)
+        if (user.getTotpSecret() == null || user.getTotpSecret().isEmpty()) {
+            return ResponseEntity.badRequest().body("TOTP not registered for this user.");
+        }
+
+        // Use your existing TotpService to verify the code
+        boolean valid = totpService.verifyCode(user.getTotpSecret(), Integer.parseInt(request.getCode()));
+        if (!valid) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Invalid TOTP code.");
+        }
+
+        // Enable TOTP for this user
+        user.setTotpEnabled(true);
+        userRepository.save(user);
+
+        return ResponseEntity.ok("TOTP verified and enabled.");
+    }
 
 }
