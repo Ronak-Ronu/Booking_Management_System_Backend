@@ -4,7 +4,7 @@ The API documentation for "A booking Management System for "everything""
 
 ---
 
-[view in Postman](https://.postman.co/workspace/My-Workspace~00c94159-e798-494b-8b70-a960eabccaab/collection/27269870-2cfef214-1914-4e1f-914e-b25386455771?action=share&creator=27269870&active-environment=27269870-6c68f93c-c24d-4e3b-86fe-d66515ca9c07)
+[view in Postman](https://postman.co/workspace/My-Workspace~00c94159-e798-494b-8b70-a960eabccaab/collection/27269870-2cfef214-1914-4e1f-914e-b25386455771?action=share&creator=27269870&active-environment=27269870-6c68f93c-c24d-4e3b-86fe-d66515ca9c07)
 
 or
 ## Table of Contents
