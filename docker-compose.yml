@@ -1,0 +1,102 @@
+version: "3.9"
+
+services:
+  kong-database:
+    image: postgres:13
+    container_name: kong-postgres
+    environment:
+      POSTGRES_DB: kong
+      POSTGRES_USER: kong
+      POSTGRES_PASSWORD: 12345
+    volumes:
+      - kong_pg_data:/var/lib/postgresql/data
+    ports:
+      - "5433:5432"        # host:container
+    networks: [kong-net]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U kong -d kong"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # 2. One-off migration job
+  kong-migration:
+    image: kong:3.4
+    container_name: kong-migration
+    environment:
+      KONG_DATABASE: postgres
+      KONG_PG_HOST: kong-database
+      KONG_PG_PORT: 5432
+      KONG_PG_DATABASE: kong
+      KONG_PG_USER: kong
+      KONG_PG_PASSWORD: 12345
+    command: kong migrations bootstrap
+    depends_on:
+      kong-database:
+        condition: service_healthy
+    networks: [kong-net]
+    restart: "no"
+
+  # 3. Kong Gateway
+  kong:
+    image: kong:3.4
+    container_name: kong-gateway
+    environment:
+      KONG_DATABASE: postgres
+      KONG_PG_HOST: kong-database
+      KONG_PG_PORT: 5432
+      KONG_PG_DATABASE: kong
+      KONG_PG_USER: kong
+      KONG_PG_PASSWORD: 12345
+      KONG_ADMIN_LISTEN: 0.0.0.0:8001
+      KONG_PROXY_LISTEN: 0.0.0.0:8000
+      KONG_PROXY_ACCESS_LOG: /dev/stdout
+      KONG_ADMIN_ACCESS_LOG: /dev/stdout
+    depends_on:
+      kong-database:
+        condition: service_healthy
+      kong-migration:
+        condition: service_completed_successfully
+    ports:
+      - "8000:8000"        # proxy
+      - "8001:8001"        # admin
+    networks: [kong-net]
+    healthcheck:
+      test: ["CMD", "kong", "health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # 4. Your Spring Boot API
+  booking-management:
+    image: booking-management:latest
+    container_name: booking-management
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      SPRING_DATASOURCE_URL: jdbc:postgresql://kong-database:5432/booking_db
+      SPRING_DATASOURCE_USERNAME: kong
+      SPRING_DATASOURCE_PASSWORD: 12345
+    ports:
+      - "9093:9093"
+    networks: [kong-net]
+    restart: unless-stopped
+
+  # 5. Redis (ONLY needed for global rate limiting)
+#  redis:
+#    image: redis:7
+#    container_name: kong-redis
+#    ports:
+#      - "6379:6379"
+#    networks: [kong-net]
+#    healthcheck:
+#      test: ["CMD", "redis-cli", "ping"]
+#      interval: 10s
+#      timeout: 5s
+#      retries: 5
+
+volumes:
+  kong_pg_data:
+
+networks:
+  kong-net:
+    driver: bridge
