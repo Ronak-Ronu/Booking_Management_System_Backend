@@ -64,8 +64,9 @@ public class BookableItem {
     @Column(nullable = false)
     private boolean isPrivate = false;
 
-    // NEW FIELD: List of pricing tiers, stored as JSON
+    // in BookableItem.java
     @Convert(converter = JsonListConverter.class)
-    @Column(columnDefinition = "JSON") // Use JSON column type for MySQL 5.7+
+    @Column(columnDefinition = "TEXT")
     private List<PriceTier> priceTiers;
+
 }
