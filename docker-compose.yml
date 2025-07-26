@@ -11,7 +11,7 @@ services:
     volumes:
       - kong_pg_data:/var/lib/postgresql/data
     ports:
-      - "5433:5432"        # host:container
+      - "5433:5432"
     networks: [kong-net]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U kong -d kong"]
