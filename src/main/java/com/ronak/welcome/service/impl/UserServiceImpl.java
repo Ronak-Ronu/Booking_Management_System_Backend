@@ -28,7 +28,7 @@ import java.util.stream.Collectors;
 @Service
 public class UserServiceImpl implements UserService {
     public final UserRepository userRepository;
-    private final EmailService emailService; // This is now your actual EmailServiceImpl
+    private final EmailService emailService;
     private final CityServiceImpl cityService;
     private final OutboxEventRepository outboxEventRepository;
     private final PasswordEncoder passwordEncoder;
@@ -70,7 +70,7 @@ public class UserServiceImpl implements UserService {
 
         User savedUser = userRepository.save(user);
 
-        UserResponse userResponsePayload = new UserResponse(savedUser.getId(), savedUser.getUsername(), savedUser.getEmail(), savedUser.getRoles());
+        UserResponse userResponsePayload = new UserResponse(savedUser.getId(), savedUser.getUsername(), savedUser.getEmail(), savedUser.getRoles(),savedUser.getManagedItemTypes());
         try {
             String payloadJson = objectMapper.writeValueAsString(userResponsePayload);
             OutboxEvent event = new OutboxEvent("USER_CREATED", payloadJson, savedUser.getEmail());
@@ -85,13 +85,13 @@ public class UserServiceImpl implements UserService {
     public UserResponse getUserById(Long id) {
         User user = userRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("User not found with ID: " + id));
-        return new UserResponse(user.getId(), user.getUsername(), user.getEmail(), user.getRoles());
+        return new UserResponse(user.getId(), user.getUsername(), user.getEmail(), user.getRoles(),user.getManagedItemTypes());
     }
 
     @Override
     public List<UserResponse> getAllUsers() {
         return userRepository.findAll().stream()
-                .map(user -> new UserResponse(user.getId(), user.getUsername(), user.getEmail(), user.getRoles()))
+                .map(user -> new UserResponse(user.getId(), user.getUsername(), user.getEmail(), user.getRoles(),user.getManagedItemTypes()))
                 .collect(Collectors.toList());
     }
 
@@ -117,7 +117,7 @@ public class UserServiceImpl implements UserService {
         }
 
         User updatedUser = userRepository.save(existingUser);
-        return new UserResponse(updatedUser.getId(), updatedUser.getUsername(), updatedUser.getEmail(), updatedUser.getRoles());
+        return new UserResponse(updatedUser.getId(), updatedUser.getUsername(), updatedUser.getEmail(), updatedUser.getRoles(),updatedUser.getManagedItemTypes());
     }
 
     @Override
@@ -133,6 +133,6 @@ public class UserServiceImpl implements UserService {
     public UserResponse getCurrentUser(String username) {
         User user = userRepository.findByUsername(username)
                 .orElseThrow(() -> new ResourceNotFoundException("Authenticated user not found: " + username));
-        return new UserResponse(user.getId(), user.getUsername(), user.getEmail(), user.getRoles());
+        return new UserResponse(user.getId(), user.getUsername(), user.getEmail(), user.getRoles(),user.getManagedItemTypes());
     }
 }

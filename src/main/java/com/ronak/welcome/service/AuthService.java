@@ -47,7 +47,9 @@ public class AuthService {
         );
 
         User user = userRepository.findByUsername(authRequest.username())
-                .orElseThrow(() -> new RuntimeException("User not found"));
+                .orElseGet(() -> userRepository.findByEmail(authRequest.username())
+                        .orElseThrow(() -> new RuntimeException("User not found")));
+
 
         // If TOTP is enabled for this user, require the TOTP code
         if (user.isTotpEnabled()) {
